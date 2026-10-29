@@ -14,12 +14,27 @@ public abstract class PlayQueueItemTouchCallback extends ItemDragTouchHelperCall
     @Nullable private PendingViewportAnchor pendingViewportAnchor;
 
     public PlayQueueItemTouchCallback() {
-        super(ItemTouchHelper.UP | ItemTouchHelper.DOWN, ItemTouchHelper.RIGHT);
+        super(ItemTouchHelper.UP | ItemTouchHelper.DOWN, ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT);
     }
 
     public abstract void onMove(int sourceIndex, int targetIndex);
 
     public abstract void onSwiped(int index);
+
+    @Override
+    public int getMovementFlags(final RecyclerView recyclerView,
+                                final RecyclerView.ViewHolder holder) {
+        final RecyclerView.Adapter<?> adapter = holder.getBindingAdapter();
+        final int position = holder.getBindingAdapterPosition();
+        if (!(adapter instanceof PlayQueueAdapter)) {
+            return 0;
+        }
+        final PlayQueueAdapter queueAdapter = (PlayQueueAdapter) adapter;
+        return makeMovementFlags(queueAdapter.canDrag(position)
+                ? ItemTouchHelper.UP | ItemTouchHelper.DOWN : 0,
+                queueAdapter.isQueuePosition(position)
+                ? ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT : 0);
+    }
 
     @Override
     public boolean onMove(final RecyclerView recyclerView, final RecyclerView.ViewHolder source,
@@ -32,6 +47,11 @@ public abstract class PlayQueueItemTouchCallback extends ItemDragTouchHelperCall
         final int targetIndex = target.getBindingAdapterPosition();
         if (sourceIndex == RecyclerView.NO_POSITION || targetIndex == RecyclerView.NO_POSITION
                 || sourceIndex == targetIndex) {
+            return false;
+        }
+        if (!(source.getBindingAdapter() instanceof PlayQueueAdapter)
+                || !((PlayQueueAdapter) source.getBindingAdapter()).canDrag(sourceIndex)
+                || !((PlayQueueAdapter) source.getBindingAdapter()).canDrag(targetIndex)) {
             return false;
         }
 
