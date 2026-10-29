@@ -129,6 +129,14 @@ public final class PersistentQueueFragment extends BaseFragment {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        if (!PersistentQueueManager.isEnabled(requireContext())) {
+            getParentFragmentManager().popBackStack();
+        }
+    }
+
+    @Override
     public void onCreateOptionsMenu(@NonNull final Menu menu, @NonNull final MenuInflater inflater) {
         inflater.inflate(R.menu.persistent_queue, menu);
     }
