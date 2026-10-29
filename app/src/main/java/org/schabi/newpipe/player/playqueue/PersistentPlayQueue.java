@@ -66,27 +66,56 @@ public final class PersistentPlayQueue extends PlayQueue {
         }
     }
 
+    @FunctionalInterface
+    interface PageResolver {
+        Single<State> resolve(State source, Node boundary);
+    }
+
+    private transient PageResolver pageResolver;
     private State state;
     private transient PersistentQueueStore store;
     private transient boolean frozen;
     private transient boolean fetching;
     private transient Throwable pendingError;
-    private long revision;
+    private long structuralRevision;
 
     PersistentPlayQueue(final PersistentQueueStore store) {
+        this(store, PersistentPlayQueue::resolve);
+    }
+
+    PersistentPlayQueue(final PersistentQueueStore store, final PageResolver pageResolver) {
         super(0, Collections.emptyList());
+        this.pageResolver = pageResolver;
         this.store = store;
         state = store.load();
         init();
     }
 
+    @Override
+    public synchronized void init() {
+        if (getBroadcastReceiver() == null) {
+            super.init();
+        }
+    }
+
+    @Override
+    public void dispose() {
+        // The manager owns this bus for the entire process, including closed-player views.
+    }
+
     private void commit(final State candidate) {
+        commit(candidate, true);
+    }
+
+    private void commit(final State candidate, final boolean structural) {
         if (frozen || store == null) {
             throw new IllegalStateException("This queue owner is no longer writable");
         }
         store.save(candidate);
         state = candidate;
-        revision++;
+        if (structural) {
+            structuralRevision++;
+        }
     }
 
     synchronized void freeze() {
@@ -271,7 +300,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         } else {
             candidate.progress.put(item.getUuid(), position);
         }
-        commit(candidate);
+        commit(candidate, false);
         broadcast(new RecoveryEvent(index, position));
     }
 
@@ -298,14 +327,14 @@ public final class PersistentPlayQueue extends PlayQueue {
                 candidate.progress.remove(item.getUuid());
             }
         }
-        commit(candidate);
+        commit(candidate, false);
         broadcast(new RecoveryEvent(0, RECOVERY_UNSET));
     }
 
     public synchronized void clearRecovery() {
         final State candidate = state.copy();
         candidate.progress.clear();
-        commit(candidate);
+        commit(candidate, false);
         broadcast(new RecoveryEvent(0, RECOVERY_UNSET));
     }
 
@@ -379,7 +408,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         return page.map(info -> splice(source, boundary, info.getItems(), info.getNextPage()));
     }
 
-    private static State splice(final State source, final Node boundary,
+    static State splice(final State source, final Node boundary,
                                 final List<StreamInfoItem> entries, final Page next) {
         final State candidate = source.copy();
         int position = candidate.nodes.indexOf(boundary);
@@ -402,16 +431,22 @@ public final class PersistentPlayQueue extends PlayQueue {
         return source.nodes.stream().filter(node -> node.item == null).findFirst().orElse(null);
     }
 
+    /** Explicit user retry; implicit loader fetches never bypass a retained failure. */
+    public synchronized void retryPending() {
+        pendingError = null;
+        fetch();
+    }
+
     @Override
     public synchronized void fetch() {
         final Node boundary = firstPending(state);
-        if (frozen || fetching || boundary == null) {
+        if (frozen || fetching || pendingError != null || boundary == null) {
             return;
         }
         fetching = true;
         pendingError = null;
         final State snapshot = state.copy();
-        resolve(snapshot, boundary).subscribeOn(Schedulers.io()).subscribe(result -> {
+        Single.defer(() -> pageResolver.resolve(snapshot, boundary)).subscribeOn(Schedulers.io()).subscribe(result -> {
             synchronized (PersistentPlayQueue.this) {
                 fetching = false;
                 if (frozen || !state.nodes.contains(boundary)) {
@@ -448,7 +483,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         Node boundary;
         while ((boundary = firstPending(result)) != null) {
             checkCancelled(cancelled);
-            final java.util.concurrent.Future<State> request = resolve(result, boundary)
+            final java.util.concurrent.Future<State> request = pageResolver.resolve(result, boundary)
                     .subscribeOn(Schedulers.io()).toFuture();
             try {
                 while (true) {
@@ -494,7 +529,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         final long expectedRevision;
         synchronized (this) {
             snapshot = state.copy();
-            expectedRevision = revision;
+            expectedRevision = structuralRevision;
         }
         final State candidate = materialized(snapshot, cancelled);
         if (candidate.nodes.size() > 2) {
@@ -502,9 +537,12 @@ public final class PersistentPlayQueue extends PlayQueue {
         }
         synchronized (this) {
             checkCancelled(cancelled);
-            if (revision != expectedRevision) {
+            if (structuralRevision != expectedRevision) {
                 throw new ConcurrentModificationException("Queue changed while loading pages");
             }
+            // Progress checkpoints/deletions are independent of the membership snapshot.
+            candidate.progress.clear();
+            candidate.progress.putAll(state.progress);
             commit(candidate);
             broadcast(new InitEvent());
         }

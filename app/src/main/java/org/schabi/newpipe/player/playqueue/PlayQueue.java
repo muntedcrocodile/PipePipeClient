@@ -606,8 +606,8 @@ public abstract class PlayQueue implements Serializable {
             return false;
         }
         for (int i = 0; i < size(); i++) {
-            final PlayerMediaItem stream = streams.get(i);
-            final PlayerMediaItem otherStream = other.streams.get(i);
+            final PlayerMediaItem stream = getItem(i);
+            final PlayerMediaItem otherStream = other.getItem(i);
             // Check is based on serviceId and URL
             if (stream.getServiceId() != otherStream.getServiceId()
                     || !stream.getUrl().equals(otherStream.getUrl())) {
@@ -621,7 +621,7 @@ public abstract class PlayQueue implements Serializable {
     public int hashCode() {
         // Must agree with equals(), which compares the index and the content of every entry.
         int result = getIndex();
-        for (final PlayerMediaItem item : streams) {
+        for (final PlayerMediaItem item : getStreams()) {
             result = 31 * result + item.getServiceId();
             result = 31 * result + item.getUrl().hashCode();
         }
