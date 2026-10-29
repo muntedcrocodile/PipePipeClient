@@ -74,6 +74,7 @@ public final class NewPipeSettings {
         // readAgain is true so that if new settings are added their default value is set
         PreferenceManager.setDefaultValues(context, R.xml.main_settings, true);
         PreferenceManager.setDefaultValues(context, R.xml.video_audio_settings, true);
+        PreferenceManager.setDefaultValues(context, R.xml.gesture_settings, true);
         PreferenceManager.setDefaultValues(context, R.xml.download_settings, true);
         PreferenceManager.setDefaultValues(context, R.xml.appearance_settings, true);
         PreferenceManager.setDefaultValues(context, R.xml.history_settings, true);

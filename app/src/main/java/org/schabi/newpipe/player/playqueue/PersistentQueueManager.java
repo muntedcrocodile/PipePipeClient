@@ -35,7 +35,7 @@ public final class PersistentQueueManager {
 
     public static boolean isEnabled(final Context context) {
         return PreferenceManager.getDefaultSharedPreferences(context)
-                .getBoolean(ENABLED_KEY, false);
+                .getBoolean(ENABLED_KEY, true);
     }
 
     public synchronized PersistentPlayQueue getQueue() {

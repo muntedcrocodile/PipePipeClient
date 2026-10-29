@@ -104,6 +104,11 @@ class ContentSettingsManager(private val fileLocator: NewPipeFileLocator) {
             ZipHelper.extractFileFromZip(file, fileLocator.settings.path, "newpipe.settings")
     }
 
+    /**
+     * Replaces preferences rather than merging with the current installation. Keys absent from
+     * older backups use runtime/XML defaults, including enabled queue mode and video-row swipes.
+     * Database-only imports do not call this method and retain current preferences.
+     */
     fun loadSharedPreferences(preferences: SharedPreferences) {
         try {
             if (fileLocator.settingsJson.exists()) {

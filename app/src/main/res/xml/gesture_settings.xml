@@ -111,7 +111,7 @@
         android:key="@string/video_swipe_enabled_key"
         android:title="@string/video_swipe_title"
         android:summary="@string/video_swipe_summary"
-        android:defaultValue="false"
+        android:defaultValue="true"
         app:iconSpaceReserved="false" />
     <ListPreference
         android:key="@string/video_swipe_left_action_key"
