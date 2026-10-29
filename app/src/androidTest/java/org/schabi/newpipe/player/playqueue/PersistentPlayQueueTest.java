@@ -27,8 +27,10 @@ import org.schabi.newpipe.player.mediaitem.PlayerMediaItem;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
-/** Real SQLite file reopen/rollback tests; no network or player timing dependency. */
+/** Real SQLite reopen/rollback and player checkpoint tests with controlled media; no network. */
 @RunWith(AndroidJUnit4.class)
 public class PersistentPlayQueueTest {
     private static final String NAME = "persistent-queue-test.db";
@@ -159,6 +161,7 @@ public class PersistentPlayQueueTest {
         queue.setRecovery(0, 12_000);
         queue.setRecovery(2, 34_000);
         withPlayer(true, player -> {
+            assertTrue(player.getPersistentQueueController().checkpoint()); // Safe unprepared no-op.
             assertTrue(QueueViewActions.editIfSuccessful(context,
                     () -> player.selectQueueItem(selected)));
             assertEquals(selected.getUuid(), queue.getItem().getUuid());
@@ -201,6 +204,200 @@ public class PersistentPlayQueueTest {
         });
     }
 
+    @Test
+    public void preparedSelectionAbortsWhenOnlyCheckpointWritesFail() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        withPreparedPlayer(player -> {
+            assertFalse(QueueViewActions.editIfSuccessful(noFurtherFeedback(),
+                    () -> player.selectQueueItem(queue.getItem(1))));
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void attachedOwnerSelectionAbortsWithoutDuplicateCheckpointFeedback() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        withPreparedPlayer(player -> {
+            assertFalse(QueueViewActions.editIfSuccessful(noFurtherFeedback(), () -> {
+                queue.setIndex(1); // Direct owner path exercises the before-head-change callback.
+                return true;
+            }));
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void attachedOwnerPlayNowAbortsWhenCheckpointFails() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        final PlayQueue incoming = new SinglePlayQueue(Collections.emptyList(), 0);
+        incoming.append(item("incoming"));
+        withPreparedPlayer(player -> {
+            assertFalse(QueueViewActions.editIfSuccessful(noFurtherFeedback(), () -> {
+                queue.insert(incoming, true, false);
+                return true;
+            }));
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void preparedPlaybackIntentAbortsBeforeChangingQueueOrPlayerMode() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        final PlayQueue incoming = new SinglePlayQueue(Collections.emptyList(), 0);
+        incoming.append(item("incoming"));
+        withPreparedPlayer(player -> {
+            player.handleIntent(org.schabi.newpipe.util.NavigationHelper.getPlayerIntent(context,
+                    org.schabi.newpipe.player.PlayerService.class, incoming, true));
+            assertSame(queue, player.getPlayQueue());
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void preparedSourceRebuildAbortsBeforeReplacingManagerOnCheckpointFailure() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        withPreparedPlayer(player -> {
+            try {
+                final var reload = Player.class.getDeclaredMethod("reloadPlayQueueManager");
+                reload.setAccessible(true);
+                final var manager = Player.class.getDeclaredField("playQueueManager");
+                manager.setAccessible(true);
+                assertNull(manager.get(player));
+                reload.invoke(player);
+                assertNull(manager.get(player));
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void preparedHistoryAndNextKeepCurrentOccurrenceAfterCheckpointFailure() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        withPreparedPlayer(player -> {
+            final var controller = player.getPersistentQueueController();
+            controller.replayHistory(item("history"));
+            controller.previous();
+            controller.consume(false);
+            controller.consume(true);
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void failedModeSwitchRetainsLivePolicyAndPausedQueue() {
+        rejectCheckpointWritesOnly();
+        final String head = queue.getItem().getUuid();
+        withPreparedPlayer(player -> {
+            final var prefs = PreferenceManager.getDefaultSharedPreferences(context);
+            prefs.edit().putBoolean("persistent_queue_enabled", false).commit();
+            try {
+                final var change = player.getPersistentQueueController().getClass()
+                        .getDeclaredMethod("switchMode");
+                change.setAccessible(true);
+                change.invoke(player.getPersistentQueueController());
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+            assertTrue(player.isPersistentQueueMode());
+            assertSame(queue, player.getPlayQueue());
+            assertFailedCheckpointPreservedQueue(player, head);
+        });
+    }
+
+    @Test
+    public void preparedSelectionCheckpointsInterruptedOccurrenceBeforeReordering() {
+        queue.append(Arrays.asList(item("A"), item("B")));
+        queue.setRecovery(0, 12_000);
+        queue.setRecovery(1, 34_000);
+        final String head = queue.getItem().getUuid();
+        final PlayerMediaItem selected = queue.getItem(1);
+        withPreparedPlayer(player -> {
+            assertTrue(player.selectQueueItem(selected));
+            assertEquals(selected.getUuid(), queue.getItem().getUuid());
+            assertEquals(head, queue.getItem(1).getUuid());
+            assertEquals(34_000, queue.getRecoveryPosition(0));
+            assertTrue(queue.getRecoveryPosition(1) >= 60_000);
+            final var restored = new PersistentPlayQueue(new PersistentQueueStore(helper.getWritableDatabase()));
+            assertEquals(selected.getUuid(), restored.getItem().getUuid());
+            assertEquals(queue.getRecoveryPosition(1), restored.getRecoveryPosition(1));
+        });
+    }
+
+    @Test
+    public void idleReplacementPlayerDoesNotCheckpointZeroOverSavedProgress() {
+        queue.append(item("A"));
+        queue.setRecovery(0, 12_000);
+        withPlayer(true, player -> {
+            final var exo = new com.google.android.exoplayer2.ExoPlayer.Builder(context).build();
+            setPreparedPlayer(player, exo); // App's prepared flag may lag a replaced ExoPlayer.
+            try {
+                assertTrue(player.getPersistentQueueController().checkpoint());
+                assertEquals(12_000, queue.getRecoveryPosition(0));
+            } finally {
+                setPreparedPlayer(player, null);
+                exo.release();
+            }
+        });
+    }
+
+    private Context noFurtherFeedback() {
+        return new ContextWrapper(context) {
+            @Override public Resources getResources() {
+                throw new AssertionError("Checkpoint failure was already reported by the player");
+            }
+        };
+    }
+
+    private void rejectCheckpointWritesOnly() {
+        queue.append(Arrays.asList(item("A"), item("B")));
+        queue.setRecovery(0, 12_000);
+        queue.setRecovery(1, 34_000);
+        final var db = helper.getWritableDatabase();
+        // Compare the encoded membership/order prefix, leaving the trailing progress map out.
+        // No JSON SQLite extension is needed. Reorders/inserts remain writable.
+        db.execSQL("CREATE TRIGGER reject_checkpoint BEFORE INSERT ON persistent_queue_state "
+                + "WHEN substr(CAST(NEW.state AS TEXT),1,instr(CAST(NEW.state AS TEXT),'\"progress\":')) "
+                + "= (SELECT substr(CAST(state AS TEXT),1,instr(CAST(state AS TEXT),'\"progress\":')) "
+                + "FROM persistent_queue_state WHERE id=1) "
+                + "BEGIN SELECT RAISE(ABORT,'checkpoint disk failure'); END");
+        // Prove that membership writes WOULD succeed, then roll the probe back on disk.
+        db.beginTransaction();
+        try {
+            final var probe = new PersistentPlayQueue(new PersistentQueueStore(db));
+            probe.setIndex(1);
+            assertEquals("B", probe.getItem().getUrl());
+            final PlayQueue incoming = new SinglePlayQueue(Collections.emptyList(), 0);
+            incoming.append(item("probe"));
+            probe.insert(incoming, true, false);
+            assertEquals("probe", probe.getItem().getUrl());
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private void assertFailedCheckpointPreservedQueue(final Player player, final String head) {
+        assertFalse(player.getPlayWhenReady());
+        assertSame(queue, player.getPlayQueue());
+        assertEquals(2, queue.size());
+        assertEquals(head, queue.getItem().getUuid());
+        assertEquals("B", queue.getItem(1).getUrl());
+        assertEquals(12_000, queue.getRecoveryPosition(0));
+        assertEquals(34_000, queue.getRecoveryPosition(1));
+        final var restored = new PersistentPlayQueue(new PersistentQueueStore(helper.getWritableDatabase()));
+        assertEquals(head, restored.getItem().getUuid());
+        assertEquals(queue.getItem(1).getUuid(), restored.getItem(1).getUuid());
+        assertEquals(12_000, restored.getRecoveryPosition(0));
+        assertEquals(34_000, restored.getRecoveryPosition(1));
+    }
+
     private static void setPlayerQueue(final Player player, final PlayQueue playQueue) {
         try {
             final var setter = Player.class.getDeclaredMethod("setPlayQueue", PlayQueue.class);
@@ -212,35 +409,94 @@ public class PersistentPlayQueueTest {
     }
 
     private void withPlayer(final boolean persistent, final java.util.function.Consumer<Player> test) {
+        withPlayer(persistent, false, test);
+    }
+
+    private void withPreparedPlayer(final java.util.function.Consumer<Player> test) {
+        withPlayer(true, true, test);
+    }
+
+    private void withPlayer(final boolean persistent, final boolean prepared,
+                            final java.util.function.Consumer<Player> test) {
         final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         final boolean hadPreference = prefs.contains("persistent_queue_enabled");
         final boolean oldPreference = prefs.getBoolean("persistent_queue_enabled", true);
         final TestService service = new TestService(context);
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            prefs.edit().putBoolean("persistent_queue_enabled", persistent).commit();
-            final PlayerServiceInterface bridge = (PlayerServiceInterface)
-                    java.lang.reflect.Proxy.newProxyInstance(PlayerServiceInterface.class.getClassLoader(),
-                            new Class<?>[]{PlayerServiceInterface.class}, (proxy, method, args) -> {
-                                if (method.getName().equals("getInstance")) return service;
-                                if (method.getName().equals("isLandscape")) return false;
-                                throw new AssertionError("Unexpected service call: " + method.getName());
-                            });
-            Player player = null;
-            try {
-                player = new Player(bridge);
-                setPlayerQueue(player, queue);
-                test.accept(player);
-            } finally {
+        final Player[] player = {null};
+        final com.google.android.exoplayer2.ExoPlayer[] exo = {null};
+        final CountDownLatch ready = new CountDownLatch(1);
+        final var instrumentation = InstrumentationRegistry.getInstrumentation();
+        try {
+            instrumentation.runOnMainSync(() -> {
+                prefs.edit().putBoolean("persistent_queue_enabled", persistent).commit();
+                final PlayerServiceInterface bridge = (PlayerServiceInterface)
+                        java.lang.reflect.Proxy.newProxyInstance(PlayerServiceInterface.class.getClassLoader(),
+                                new Class<?>[]{PlayerServiceInterface.class}, (proxy, method, args) -> {
+                                    if (method.getName().equals("getInstance")) return service;
+                                    if (method.getName().equals("isLandscape")) return false;
+                                    throw new AssertionError("Unexpected service call: " + method.getName());
+                                });
+                player[0] = new Player(bridge);
+                setPlayerQueue(player[0], queue);
+                if (prepared) {
+                    exo[0] = new com.google.android.exoplayer2.ExoPlayer.Builder(context).build();
+                    setPreparedPlayer(player[0], exo[0]);
+                    exo[0].addListener(new com.google.android.exoplayer2.Player.Listener() {
+                        @Override public void onPlaybackStateChanged(final int state) {
+                            if (state == com.google.android.exoplayer2.Player.STATE_READY) ready.countDown();
+                        }
+                    });
+                    exo[0].setMediaSource(new com.google.android.exoplayer2.source.SilenceMediaSource.Factory()
+                            .setDurationUs(600_000_000L).createMediaSource());
+                    exo[0].seekTo(60_000);
+                    exo[0].prepare();
+                    player[0].getPersistentQueueController().attachQueue();
+                }
+            });
+            if (prepared) assertTrue("In-memory media must prepare", ready.await(10, TimeUnit.SECONDS));
+            instrumentation.runOnMainSync(() -> {
+                if (prepared) {
+                    assertEquals(com.google.android.exoplayer2.Player.STATE_READY, exo[0].getPlaybackState());
+                    assertEquals(60_000, exo[0].getContentPosition());
+                    exo[0].setPlayWhenReady(true);
+                }
+                test.accept(player[0]);
+            });
+        } catch (final InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(error);
+        } finally {
+            instrumentation.runOnMainSync(() -> {
                 try {
-                    if (player != null) closeUnstartedPlayer(player);
+                    if (exo[0] != null) {
+                        setPreparedPlayer(player[0], null);
+                        exo[0].release();
+                    }
+                    if (player[0] != null) closeUnstartedPlayer(player[0]);
                 } finally {
                     final SharedPreferences.Editor restore = prefs.edit();
                     if (hadPreference) restore.putBoolean("persistent_queue_enabled", oldPreference);
                     else restore.remove("persistent_queue_enabled");
                     restore.commit();
                 }
-            }
-        });
+            });
+        }
+    }
+
+    private void setPreparedPlayer(final Player player, final com.google.android.exoplayer2.ExoPlayer exo) {
+        try {
+            final var field = Player.class.getDeclaredField("simpleExoPlayer");
+            field.setAccessible(true);
+            field.set(player, exo);
+            final var prepared = Player.class.getDeclaredMethod("setPrepared", boolean.class);
+            prepared.setAccessible(true);
+            prepared.invoke(player, exo != null);
+            final var current = Player.class.getDeclaredMethod("setCurrentItem", PlayerMediaItem.class);
+            current.setAccessible(true);
+            current.invoke(player, exo == null ? null : queue.getItem());
+        } catch (final ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
     }
 
     private static void closeUnstartedPlayer(final Player player) {

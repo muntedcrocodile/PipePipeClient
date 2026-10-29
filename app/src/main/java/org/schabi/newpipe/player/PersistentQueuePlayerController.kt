@@ -8,6 +8,7 @@ import android.util.Log
 import android.widget.Toast
 import com.google.android.exoplayer2.Player.DISCONTINUITY_REASON_AUTO_TRANSITION
 import com.google.android.exoplayer2.Player.PositionInfo
+import com.google.android.exoplayer2.Player.STATE_IDLE
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import org.schabi.newpipe.R
 import org.schabi.newpipe.player.mediaitem.PlayerMediaItem
@@ -32,8 +33,9 @@ class PersistentQueuePlayerController(private val player: Player) {
     private var historyReplayInProgress = false
     private var checkpointInProgress = false
     private var checkpointFailureReported = false
+    private var restoringModePreference = false
     private val modeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "persistent_queue_enabled") main.post { switchMode() }
+        if (key == "persistent_queue_enabled" && !restoringModePreference) main.post { switchMode() }
     }
 
     fun start() {
@@ -55,7 +57,18 @@ class PersistentQueuePlayerController(private val player: Player) {
     private fun switchMode() {
         if (closing) return
         // Checkpoint by queue type: the preference already contains its NEW value here.
-        checkpoint()
+        if (!checkpoint()) {
+            // The preference changed before this callback. Keep the live queue's policy until
+            // its interrupted progress can be saved; do not destroy/reinterpret that queue.
+            restoringModePreference = true
+            try {
+                player.prefs.edit().putBoolean(PersistentQueueManager.ENABLED_KEY,
+                    player.playQueue is PersistentPlayQueue).apply()
+            } finally {
+                restoringModePreference = false
+            }
+            return
+        }
         attachedQueue?.setBeforeHeadChange(null)
         attachedQueue = null
         player.destroyPlayer()
@@ -83,7 +96,7 @@ class PersistentQueuePlayerController(private val player: Player) {
         attachedQueue?.setBeforeHeadChange(null)
         attachedQueue = player.playQueue as? PersistentPlayQueue
         attachedQueue?.setBeforeHeadChange {
-            checkpoint()
+            if (!checkpoint()) throw CheckpointFailedException()
             if (!historyReplayInProgress) policy.resetPrevious()
         }
         resumeHead()
@@ -138,16 +151,19 @@ class PersistentQueuePlayerController(private val player: Player) {
         if (SystemClock.elapsedRealtime() - lastCheckpoint >= 5000) checkpoint()
     }
 
-    fun checkpoint() {
-        val queue = player.playQueue as? PersistentPlayQueue ?: return
-        if (player.exoPlayerIsNull() || !player.isPrepared || resumePending || checkpointInProgress) return
-        val current = player.currentItem ?: return
-        val head = queue.getItem() ?: return
-        if (current.uuid != head.uuid || player.simpleExoPlayer.currentMediaItemIndex != 0) return
+    /** True also covers a safe no-op; false means a required durable write failed. */
+    fun checkpoint(): Boolean {
+        val queue = player.playQueue as? PersistentPlayQueue ?: return true
+        if (player.exoPlayerIsNull() || !player.isPrepared || resumePending || checkpointInProgress
+            || player.simpleExoPlayer.playbackState == STATE_IDLE) return true
+        val current = player.currentItem ?: return true
+        val head = queue.getItem() ?: return true
+        if (current.uuid != head.uuid || player.simpleExoPlayer.currentMediaItemIndex != 0) return true
         checkpointInProgress = true
-        try {
+        val saved = try {
             queue.setRecovery(0, player.simpleExoPlayer.contentPosition.coerceAtLeast(0))
             checkpointFailureReported = false
+            true
         } catch (error: RuntimeException) {
             // Never call pause()/onBufferingFailed() here: both checkpoint and would recurse.
             Log.e(Player.TAG, "Could not checkpoint persistent queue", error)
@@ -157,10 +173,12 @@ class PersistentQueuePlayerController(private val player: Player) {
                     ?: player.context.getString(R.string.network_error), Toast.LENGTH_LONG).show()
             }
             if (!player.exoPlayerIsNull()) player.simpleExoPlayer.pause()
+            false
         } finally {
             checkpointInProgress = false
         }
         lastCheckpoint = SystemClock.elapsedRealtime()
+        return saved
     }
 
     fun consume(completed: Boolean) {
@@ -168,7 +186,9 @@ class PersistentQueuePlayerController(private val player: Player) {
         // Duplicate end callbacks cannot consume the newly selected, not yet synchronized head.
         if (completed && !QueuePlaybackPolicy.consumeCompletion(player.currentItem?.uuid,
                 queue.getItem()?.uuid, policy.failed, queue.hasBlockedBoundary())) return
-        if (completed) player.saveStreamProgressStateCompleted() else player.saveStreamProgressState()
+        if (!checkpoint()) return
+        if (completed) player.saveStreamProgressStateCompleted()
+        else player.historyController.saveStreamProgressState()
         policy.resetPrevious()
         try {
             queue.consume()
@@ -189,7 +209,7 @@ class PersistentQueuePlayerController(private val player: Player) {
         val queue = player.playQueue as? PersistentPlayQueue ?: return false
         val index = queue.indexOf(item)
         if (index < 0) return false
-        checkpoint()
+        if (!checkpoint()) return false
         newSelection()
         try {
             queue.setIndex(index)
@@ -203,6 +223,7 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     fun previous() {
         val queue = player.playQueue as? PersistentPlayQueue ?: return
+        if (!checkpoint()) return
         val history = QueueHistory.getInstance(player.context)
         val item = policy.previous(queue.getItem(), history.items)
         if (item == null) {
@@ -214,8 +235,8 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     @JvmOverloads
     fun replayHistory(item: PlayerMediaItem, fromPrevious: Boolean = false) {
+        if (!checkpoint()) return
         if (!fromPrevious) policy.resetPrevious()
-        checkpoint()
         val stream = org.schabi.newpipe.extractor.stream.StreamInfoItem(
             item.serviceId, item.url, item.title, item.streamType)
         stream.duration = item.duration
@@ -264,6 +285,7 @@ class PersistentQueuePlayerController(private val player: Player) {
     }
 
     fun failure(error: Throwable) {
+        if (error is CheckpointFailedException) return // Already paused and reported by checkpoint.
         Log.e(Player.TAG, "Persistent queue operation failed", error)
         Toast.makeText(player.context, error.localizedMessage ?: player.context.getString(R.string.network_error),
             Toast.LENGTH_LONG).show()
@@ -281,4 +303,7 @@ class PersistentQueuePlayerController(private val player: Player) {
     companion object {
         const val HISTORY_REPLAY = "persistent_queue_history_replay"
     }
+
+    /** Aborts an owner command after its before-head-change checkpoint already reported failure. */
+    class CheckpointFailedException : IllegalStateException("Could not save interrupted queue progress")
 }
