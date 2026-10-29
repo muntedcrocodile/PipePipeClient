@@ -35,6 +35,34 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
  */
 public final class PersistentPlayQueue extends PlayQueue {
     private static final long serialVersionUID = 1L;
+    private static final Map<String, java.lang.ref.WeakReference<PersistentPlayQueue>> LIVE_QUEUES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Intent caching must retain the one owner, never deserialize a second writable projection. */
+    private static final class Reference implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private final String id;
+
+        Reference(final String id) {
+            this.id = id;
+        }
+
+        private Object readResolve() throws java.io.InvalidObjectException {
+            final java.lang.ref.WeakReference<PersistentPlayQueue> reference = LIVE_QUEUES.get(id);
+            final PersistentPlayQueue live = reference == null ? null : reference.get();
+            if (live == null) {
+                LIVE_QUEUES.remove(id);
+                throw new java.io.InvalidObjectException("Queue owner unavailable; restore from database");
+            }
+            return live;
+        }
+    }
+
+    private final String referenceId = java.util.UUID.randomUUID().toString();
+
+    private Object writeReplace() {
+        return new Reference(referenceId);
+    }
 
     static final class Node implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -71,6 +99,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         Single<State> resolve(State source, Node boundary);
     }
 
+    private transient Runnable beforeHeadChange;
     private transient PageResolver pageResolver;
     private State state;
     private transient PersistentQueueStore store;
@@ -90,7 +119,19 @@ public final class PersistentPlayQueue extends PlayQueue {
         this.pageResolver = pageResolver;
         this.store = store;
         state = store.load();
+        LIVE_QUEUES.put(referenceId, new java.lang.ref.WeakReference<>(this));
         init();
+    }
+
+    /** Live player registers its checkpoint here; never persisted and absent on paused restore. */
+    public synchronized void setBeforeHeadChange(@Nullable final Runnable checkpoint) {
+        beforeHeadChange = checkpoint;
+    }
+
+    private void checkpointBeforeHeadChange() {
+        if (beforeHeadChange != null && !frozen) {
+            beforeHeadChange.run();
+        }
     }
 
     @Override
@@ -122,6 +163,7 @@ public final class PersistentPlayQueue extends PlayQueue {
 
     synchronized void freeze() {
         frozen = true;
+        beforeHeadChange = null;
         cancelFetch();
     }
 
@@ -207,6 +249,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         if (nodeIndex <= 0) {
             return;
         }
+        checkpointBeforeHeadChange();
         final State candidate = state.copy();
         candidate.nodes.add(0, candidate.nodes.remove(nodeIndex));
         commit(candidate);
@@ -360,6 +403,9 @@ public final class PersistentPlayQueue extends PlayQueue {
     synchronized void insert(final PlayQueue incoming, final boolean playNow, final boolean next) {
         if (incoming == this) {
             return;
+        }
+        if (playNow) {
+            checkpointBeforeHeadChange();
         }
         final State candidate = state.copy();
         final List<Node> batch = new ArrayList<>();
