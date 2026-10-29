@@ -1,6 +1,7 @@
 package org.schabi.newpipe.player.playqueue;
 
 import android.app.ProgressDialog;
+import org.schabi.newpipe.R;
 import android.content.Context;
 import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
@@ -18,30 +19,65 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
 public final class QueueViewActions {
     private QueueViewActions() { }
 
+    public static PlayQueueItemBuilder.OnSelectedListener historyListener(
+            final org.schabi.newpipe.player.Player player) {
+        return new PlayQueueItemBuilder.OnSelectedListener() {
+            @Override
+            public void selected(final org.schabi.newpipe.player.mediaitem.PlayerMediaItem item,
+                                 final android.view.View view) {
+                player.getPersistentQueueController().replayHistory(item);
+            }
+            @Override
+            public void held(final org.schabi.newpipe.player.mediaitem.PlayerMediaItem item,
+                             final android.view.View view) { }
+            @Override
+            public void onStartDrag(final PlayQueueItemHolder holder) { }
+        };
+    }
+
     public static void edit(final Context context, final Runnable command) {
+        edit(context, command, R.string.queue_view_updated);
+    }
+
+    public static void remove(final Context context, final PlayQueue queue, final int index) {
+        if (index < 0 || index >= queue.size()) {
+            return;
+        }
+        final var occurrence = queue.getItem(index);
+        edit(context, () -> queue.remove(queue.indexOf(occurrence)), R.string.queue_view_removed);
+    }
+
+    private static void edit(final Context context, final Runnable command, final int success) {
         try {
             command.run();
-            Toast.makeText(context, "Queue updated", Toast.LENGTH_SHORT).show();
+            Toast.makeText(context, success, Toast.LENGTH_SHORT).show();
         } catch (final RuntimeException error) {
-            Toast.makeText(context, "Queue update failed: " + error.getMessage(),
+            Toast.makeText(context, context.getString(R.string.queue_view_update_failed,
+                    error.getMessage()),
                     Toast.LENGTH_LONG).show();
         }
     }
 
-    public static void clear(final Context context) {
-        new AlertDialog.Builder(context).setTitle("Clear queue?")
-                .setMessage("Remove all unfinished videos and stop playback?")
+    public static void clear(final Context context,
+                             final org.schabi.newpipe.player.Player player) {
+        new AlertDialog.Builder(context).setTitle(R.string.queue_view_clear_title)
+                .setMessage(R.string.queue_view_clear_message)
                 .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> edit(context,
-                        () -> PersistentQueueManager.getInstance(context).clear())).show();
+                .setPositiveButton(R.string.clear, (dialog, which) -> edit(context, () -> {
+                    PersistentQueueManager.getInstance(context).clear();
+                    if (player != null && !player.exoPlayerIsNull()) {
+                        player.smoothStopPlayer();
+                    }
+                    org.schabi.newpipe.player.helper.PlayerHolder.getInstance().stopService();
+                })).show();
     }
 
     public static Disposable materialize(final Context context, final FragmentManager fragments,
                                          final PersistentPlayQueue queue, final boolean shuffle) {
         final AtomicBoolean cancelled = new AtomicBoolean();
         final ProgressDialog progress = new ProgressDialog(context);
-        progress.setMessage(shuffle ? "Loading queue to shuffle upcoming videos…"
-                : "Loading queue to save as playlist…");
+        progress.setMessage(context.getString(shuffle ? R.string.queue_view_loading_shuffle
+                : R.string.queue_view_loading_save));
         progress.setIndeterminate(true);
         progress.setCancelable(true);
         progress.setOnCancelListener(dialog -> cancelled.set(true));
@@ -62,14 +98,15 @@ public final class QueueViewActions {
                         return;
                     }
                     if (shuffle) {
-                        Toast.makeText(context, "Queue updated", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(context, R.string.queue_view_updated, Toast.LENGTH_SHORT).show();
                     } else {
                         PlaylistDialog.createCorrespondingDialog(context, streams,
                                 dialog -> dialog.show(fragments, "save_queue"));
                     }
                 }, error -> {
                     if (!cancelled.get()) {
-                        Toast.makeText(context, "Could not load queue: " + error.getMessage(),
+                        Toast.makeText(context, context.getString(R.string.queue_view_load_failed,
+                                error.getMessage()),
                                 Toast.LENGTH_LONG).show();
                     }
                 });

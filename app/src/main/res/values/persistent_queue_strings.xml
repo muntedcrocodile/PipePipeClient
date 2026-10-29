@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="queue_view_title">Queue</string>
+    <string name="queue_view_history">Recent history</string>
+    <string name="queue_view_save">Save queue as playlist</string>
+    <string name="queue_view_shuffle">Shuffle upcoming</string>
+    <string name="queue_view_clear">Clear queue</string>
+    <string name="queue_view_clear_title">Clear queue?</string>
+    <string name="queue_view_clear_message">Remove all unfinished videos and stop playback?</string>
+    <string name="queue_view_remove">Remove from queue</string>
+    <string name="queue_view_removed">Removed from queue</string>
+    <string name="queue_view_updated">Queue updated</string>
+    <string name="queue_view_update_failed">Queue update failed: %1$s</string>
+    <string name="queue_view_loading_shuffle">Loading queue to shuffle upcoming videos…</string>
+    <string name="queue_view_loading_save">Loading queue to save as playlist…</string>
+    <string name="queue_view_load_failed">Could not load queue: %1$s</string>
+</resources>
