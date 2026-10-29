@@ -18,6 +18,7 @@ import com.google.android.exoplayer2.upstream.TransferListener;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.subjects.SingleSubject;
 import java.util.Collections;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -116,14 +117,16 @@ public class PersistentSourcePlaybackTest {
         if (remove) queue.append(PlayerMediaItem.forStreamInfoItem(stream("upcoming")));
         final PlayerMediaItem head = queue.getItem();
         final SingleSubject<StreamInfo> pending = SingleSubject.create();
+        final CountDownLatch subscribed = new CountDownLatch(1);
         final AtomicInteger requests = new AtomicInteger();
         start(item -> {
             assertEquals(head.getUuid(), item.getUuid());
             requests.incrementAndGet();
-            return pending;
+            return pending.doOnSubscribe(disposable -> subscribed.countDown());
         });
-        instrumentation.waitForIdleSync();
-        assertTrue("Head extraction must be outstanding before the edit", pending.hasObservers());
+        // Main-thread idleness alone cannot prove that an async resolver subscribed.
+        assertTrue("Head extraction must subscribe before the edit",
+                subscribed.await(5, TimeUnit.SECONDS));
         instrumentation.runOnMainSync(() -> {
             if (remove) queue.remove(1);
             else queue.append(PlayerMediaItem.forStreamInfoItem(stream("upcoming")));
