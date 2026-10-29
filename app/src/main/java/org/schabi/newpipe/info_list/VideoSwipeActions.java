@@ -211,6 +211,16 @@ public final class VideoSwipeActions {
         executeAction(fragment, row, action(context, direction, row));
     }
 
+    /** Submit explicit player-mode requests before returning, even for sparse feed rows. */
+    static boolean dispatchPlayerMode(final String action, final StreamInfoItem item,
+                                     final java.util.function.BiConsumer<String, SinglePlayQueue> start) {
+        if (!"background".equals(action) && !"popup".equals(action)) {
+            return false;
+        }
+        start.accept(action, new SinglePlayQueue(item));
+        return true;
+    }
+
     private static void executeAction(final Fragment fragment, final Row row, final String action) {
         final Context context = fragment.requireContext();
         if ("legacy_delete".equals(action)) {
@@ -236,6 +246,16 @@ public final class VideoSwipeActions {
             NavigationHelper.enqueueNextOnPlayer(context, new SinglePlayQueue(row.item));
             return;
         }
+        if (dispatchPlayerMode(action, row.item, (mode, queue) -> {
+            if ("background".equals(mode)) {
+                NavigationHelper.playOnBackgroundPlayer(context, queue, true);
+            } else {
+                // Keep the existing popup permission/enablement prerequisite in NavigationHelper.
+                NavigationHelper.playOnPopupPlayer(context, queue, true);
+            }
+        })) {
+            return;
+        }
         if ("remove_playlist".equals(action) || "delete_history".equals(action)) {
             final boolean playlist = "remove_playlist".equals(action);
             final Runnable remove = playlist ? row.removePlaylist : row.deleteHistory;
@@ -255,8 +275,6 @@ public final class VideoSwipeActions {
         final StreamDialogDefaultEntry entry;
         switch (action) {
             case "none": return;
-            case "background": entry = StreamDialogDefaultEntry.START_HERE_ON_BACKGROUND; break;
-            case "popup": entry = StreamDialogDefaultEntry.START_HERE_ON_POPUP; break;
             case "playlist": entry = StreamDialogDefaultEntry.APPEND_PLAYLIST; break;
             case "download": entry = StreamDialogDefaultEntry.DOWNLOAD; break;
             case "share": entry = StreamDialogDefaultEntry.SHARE; break;
