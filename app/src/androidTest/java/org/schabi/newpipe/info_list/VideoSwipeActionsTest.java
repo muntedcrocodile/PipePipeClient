@@ -123,6 +123,47 @@ public class VideoSwipeActionsTest {
         assertQueueLinkNavigation(false);
     }
 
+    @Test
+    public void queuedLocalLayoutPreferenceNotificationSurvivesFragmentDetach() {
+        final String key = context.getString(R.string.list_view_mode_key);
+        final boolean had = prefs.contains(key);
+        final String old = prefs.getString(key, null);
+        try {
+            withActivity(activity -> {
+                onMain(() -> {
+                    final var root = new android.widget.FrameLayout(activity);
+                    root.setId(R.id.fragment_holder);
+                    activity.setContentView(root);
+                    final var manager = activity.getSupportFragmentManager();
+                    final var bookmark = new org.schabi.newpipe.local.bookmark.BookmarkFragment();
+                    manager.beginTransaction().replace(R.id.fragment_holder, bookmark).commitNow();
+                    // Commit off-main while main cannot dispatch: Android captures listeners
+                    // now, so unregistering during removal cannot retract the posted callback.
+                    final Thread writer = new Thread(() -> prefs.edit().putString(key,
+                            "list".equals(old) ? "grid" : "list").commit());
+                    writer.start();
+                    try {
+                        writer.join(5_000);
+                        assertEquals(false, writer.isAlive());
+                    } catch (final InterruptedException error) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(error);
+                    }
+                    manager.beginTransaction().remove(bookmark).commitNow();
+                    assertNull(bookmark.getContext());
+                    // Also make failure synchronous on unfixed builds instead of relying only
+                    // on a subsequent process crash from Android's pending notification.
+                    bookmark.onSharedPreferenceChanged(prefs, key);
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            });
+        } finally {
+            final var editor = prefs.edit();
+            if (had) editor.putString(key, old); else editor.remove(key);
+            editor.commit();
+        }
+    }
+
     private void assertQueueLinkNavigation(final boolean nested) {
         final String key = "persistent_queue_enabled";
         final boolean had = prefs.contains(key);
