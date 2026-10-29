@@ -74,8 +74,12 @@ public class HistoryRecordManager {
     private final String streamHistoryKey;
 
     public HistoryRecordManager(final Context context) {
+        this(context, NewPipeDatabase.getInstance(context));
+    }
+
+    HistoryRecordManager(final Context context, final AppDatabase database) {
         applicationContext = context.getApplicationContext();
-        database = NewPipeDatabase.getInstance(context);
+        this.database = database;
         streamTable = database.streamDAO();
         streamHistoryTable = database.streamHistoryDAO();
         searchHistoryTable = database.searchHistoryDAO();
@@ -334,11 +338,17 @@ public class HistoryRecordManager {
 
     public Maybe<StreamStateEntity> loadStreamState(final PlayerMediaItem queueItem) {
         return ExtractorStreamInfoResolver.INSTANCE.streamOf(queueItem)
-                .map(info -> streamTable.upsert(new StreamEntity(info)))
-                .flatMapPublisher(streamStateTable::getState)
-                .firstElement()
-                .flatMap(list -> list.isEmpty() ? Maybe.empty() : Maybe.just(list.get(0)))
-                .filter(state -> state.isValid(queueItem.getDuration(), queueItem.isRoundPlayStream()))
+                .flatMapMaybe(this::loadStreamState)
+                .subscribeOn(Schedulers.io());
+    }
+
+    /** Uses the same resolved metadata for state validity and finished detection. */
+    public Maybe<Long> loadPlaybackResumePosition(final PlayerMediaItem queueItem) {
+        return ExtractorStreamInfoResolver.INSTANCE.streamOf(queueItem)
+                .flatMapMaybe(info -> loadStreamState(info)
+                        .filter(state -> info.getDuration() > 0
+                                && !state.isFinished(info.getDuration()))
+                        .map(StreamStateEntity::getProgressMillis))
                 .subscribeOn(Schedulers.io());
     }
 
