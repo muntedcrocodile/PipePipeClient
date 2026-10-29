@@ -184,19 +184,21 @@ class PersistentQueuePlayerController(private val player: Player) {
         }
     }
 
-    fun select(item: PlayerMediaItem) {
-        val queue = player.playQueue as? PersistentPlayQueue ?: return
+    /** False means no selection was committed; durable errors are reported here once. */
+    fun select(item: PlayerMediaItem): Boolean {
+        val queue = player.playQueue as? PersistentPlayQueue ?: return false
         val index = queue.indexOf(item)
-        if (index < 0) return
+        if (index < 0) return false
         checkpoint()
         newSelection()
         try {
             queue.setIndex(index)
         } catch (error: RuntimeException) {
             failure(error)
-            return
+            return false
         }
         player.play()
+        return true
     }
 
     fun previous() {

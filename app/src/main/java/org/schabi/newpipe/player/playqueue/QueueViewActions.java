@@ -48,13 +48,32 @@ public final class QueueViewActions {
     }
 
     private static void edit(final Context context, final Runnable command, final int success) {
-        try {
+        editIfSuccessful(context, () -> {
             command.run();
+            return true;
+        }, success);
+    }
+
+    /** A false result has already been handled by the command and must not show success. */
+    public static boolean editIfSuccessful(final Context context,
+                                          final java.util.function.BooleanSupplier command) {
+        return editIfSuccessful(context, command, R.string.queue_view_updated);
+    }
+
+    private static boolean editIfSuccessful(final Context context,
+                                           final java.util.function.BooleanSupplier command,
+                                           final int success) {
+        try {
+            if (!command.getAsBoolean()) {
+                return false;
+            }
             Toast.makeText(context, success, Toast.LENGTH_SHORT).show();
+            return true;
         } catch (final RuntimeException error) {
             Toast.makeText(context, context.getString(R.string.queue_view_update_failed,
                     error.getMessage()),
                     Toast.LENGTH_LONG).show();
+            return false;
         }
     }
 

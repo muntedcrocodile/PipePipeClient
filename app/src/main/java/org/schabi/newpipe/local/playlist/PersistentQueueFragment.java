@@ -149,13 +149,14 @@ public final class PersistentQueueFragment extends BaseFragment {
             if (queue.indexOf(item) < 0) {
                 continue;
             }
-            QueueViewActions.edit(requireContext(), () -> {
+            QueueViewActions.editIfSuccessful(requireContext(), () -> {
                 if (activePlayer != null && activePlayer.getPlayQueue() == queue) {
-                    activePlayer.selectQueueItem(item);
+                    return activePlayer.selectQueueItem(item);
                 } else {
                     queue.setIndex(queue.indexOf(item));
                     NavigationHelper.playOnMainPlayer(activity, queue);
                 }
+                return true;
             });
         }
     }
