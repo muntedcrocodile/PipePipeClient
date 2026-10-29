@@ -17,6 +17,13 @@ internal class QueuePlaybackPolicy<T>(private val identity: (T) -> String) {
     fun playbackFailed() { failed = true }
     fun clearFailure() { failed = false }
 
+    /** A same-occurrence tap resets navigation, but still needs an explicit source rebuild. */
+    fun retryFailedHead(): Boolean {
+        if (!failed) return false
+        failed = false
+        return true
+    }
+
     fun resetPrevious() { previous = null }
 
     fun invalidateHistory(latest: List<T>) {
@@ -33,6 +40,12 @@ internal class QueuePlaybackPolicy<T>(private val identity: (T) -> String) {
     }
 
     companion object {
+        fun showPrevious(persistent: Boolean, index: Int, size: Int): Boolean =
+            if (persistent) size > 0 else index > 0
+
+        fun showNext(persistent: Boolean, index: Int, size: Int): Boolean =
+            if (persistent) size > 0 else index + 1 < size
+
         fun hasUnfinished(empty: Boolean, complete: Boolean): Boolean = !empty || !complete
 
         fun consumeCompletion(currentId: String?, headId: String?, failed: Boolean,

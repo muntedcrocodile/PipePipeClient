@@ -164,8 +164,10 @@ class PlayerControlsVisibilityController(private val player: Player) {
         val playQueue = player.playQueue ?: return
         val binding = player.binding
 
-        val showPrev = playQueue.index != 0
-        val showNext = playQueue.index + 1 != playQueue.streams.size
+        val showPrev = QueuePlaybackPolicy.showPrevious(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
+        val showNext = QueuePlaybackPolicy.showNext(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
         val showQueue = true
         /* only when stream has segments and is not playing in popup player */
         val showSegment = !player.popupPlayerSelected() &&

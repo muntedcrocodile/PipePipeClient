@@ -3,6 +3,10 @@ package org.schabi.newpipe.player.mediasession;
 import android.support.v4.media.MediaDescriptionCompat;
 
 public interface MediaSessionCallback {
+    default boolean isPersistentQueueMode() {
+        return false;
+    }
+
     void playPrevious();
 
     void playNext();
