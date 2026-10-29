@@ -114,6 +114,78 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void queueLinkFromBookmarkedHomeTabUsesActivityContainer() {
+        assertQueueLinkNavigation(true);
+    }
+
+    @Test
+    public void queueLinkFromStandaloneBookmarksUsesActivityContainer() {
+        assertQueueLinkNavigation(false);
+    }
+
+    private void assertQueueLinkNavigation(final boolean nested) {
+        final String key = "persistent_queue_enabled";
+        final boolean had = prefs.contains(key);
+        final boolean old = prefs.getBoolean(key, true);
+        try {
+            prefs.edit().putBoolean(key, true).commit();
+            withActivity(activity -> onMain(() -> {
+                final android.widget.FrameLayout root = new android.widget.FrameLayout(activity);
+                root.setId(R.id.fragment_holder);
+                activity.setContentView(root);
+                final var manager = activity.getSupportFragmentManager();
+                final var bookmark = new org.schabi.newpipe.local.bookmark.BookmarkFragment();
+                bookmark.useAsFrontPage(nested);
+                final Fragment original;
+                if (nested) {
+                    final var parent = new BookmarkTabHost();
+                    manager.beginTransaction().replace(R.id.fragment_holder, parent).commitNow();
+                    parent.getChildFragmentManager().beginTransaction()
+                            .replace(BookmarkTabHost.CHILD_ID, bookmark).commitNow();
+                    original = parent;
+                } else {
+                    manager.beginTransaction().replace(R.id.fragment_holder, bookmark).commitNow();
+                    original = bookmark;
+                }
+                try {
+                    final Field adapterField = org.schabi.newpipe.local.BaseLocalListFragment.class
+                            .getDeclaredField("itemListAdapter");
+                    adapterField.setAccessible(true);
+                    final Field headerField = LocalItemListAdapter.class.getDeclaredField("header");
+                    headerField.setAccessible(true);
+                    final View link = (View) headerField.get(adapterField.get(bookmark));
+                    assertNotNull(link);
+                    assertEquals(context.getString(R.string.queue_view_title), ((TextView) link).getText());
+                    link.performClick();
+                    manager.executePendingTransactions();
+                    assertEquals(org.schabi.newpipe.local.playlist.PersistentQueueFragment.class,
+                            manager.findFragmentById(R.id.fragment_holder).getClass());
+                    assertEquals(1, manager.getBackStackEntryCount());
+                    assertEquals(true, manager.popBackStackImmediate());
+                    assertSame(original, manager.findFragmentById(R.id.fragment_holder));
+                } catch (final ReflectiveOperationException error) {
+                    throw new AssertionError(error);
+                }
+            }));
+        } finally {
+            final var editor = prefs.edit();
+            if (had) editor.putBoolean(key, old); else editor.remove(key);
+            editor.commit();
+        }
+    }
+
+    public static class BookmarkTabHost extends Fragment {
+        static final int CHILD_ID = 0x00fa1234;
+        @Override
+        public View onCreateView(final android.view.LayoutInflater inflater,
+                                 final ViewGroup container, final android.os.Bundle state) {
+            final var view = new android.widget.FrameLayout(requireContext());
+            view.setId(CHILD_ID);
+            return view;
+        }
+    }
+
+    @Test
     public void newControlsDefaultOnAndExplicitOptOutAndNoneHaveNoFallback() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
         prefs.edit().putString(context.getString(R.string.local_playlist_swipe_action_key), "disable").commit();

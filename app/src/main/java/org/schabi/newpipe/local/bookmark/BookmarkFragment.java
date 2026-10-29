@@ -217,7 +217,7 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
         link.setText(R.string.queue_view_title);
         final int padding = (int) (16 * getResources().getDisplayMetrics().density);
         link.setPadding(padding, padding, padding, padding);
-        link.setOnClickListener(view -> getParentFragmentManager().beginTransaction()
+        link.setOnClickListener(view -> getFM().beginTransaction()
                 .replace(R.id.fragment_holder,
                         new org.schabi.newpipe.local.playlist.PersistentQueueFragment())
                 .addToBackStack(null).commit());
