@@ -22,6 +22,7 @@ import org.schabi.newpipe.player.mediasource.LoadedMediaSource;
 import org.schabi.newpipe.player.mediasource.ManagedMediaSource;
 import org.schabi.newpipe.player.mediasource.ManagedMediaSourcePlaylist;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
+import org.schabi.newpipe.player.playqueue.PersistentPlayQueue;
 import org.schabi.newpipe.player.playqueue.events.MoveEvent;
 import org.schabi.newpipe.player.playqueue.events.PlayQueueEvent;
 import org.schabi.newpipe.player.playqueue.events.RemoveEvent;
@@ -232,7 +233,41 @@ public class MediaSourceManager {
         };
     }
 
+    @Nullable private String persistentHead;
+
+    private void onPersistentQueueChanged() {
+        final PersistentPlayQueue queue = (PersistentPlayQueue) playQueue;
+        if (queue.isEmpty() && queue.isComplete()) {
+            playbackListener.onPlaybackShutdown();
+            return;
+        }
+        if (queue.hasBlockedBoundary() || queue.getPendingError() != null) {
+            persistentHead = null;
+            maybeBlock();
+            if (queue.getPendingError() != null) {
+                playbackListener.onPlaybackFailure(queue.getPendingError());
+            } else {
+                queue.fetch();
+            }
+            return;
+        }
+        final PlayerMediaItem head = queue.getItem();
+        if (head != null && !head.getUuid().equals(persistentHead)) {
+            persistentHead = head.getUuid();
+            maybeBlock();
+            resetSources();
+            populateSources();
+            loadImmediate();
+        }
+        playbackListener.onPlayQueueEdited();
+    }
+
     private void onPlayQueueChanged(final PlayQueueEvent event) {
+        if (playQueue instanceof PersistentPlayQueue) {
+            onPersistentQueueChanged();
+            playQueueReactor.request(1);
+            return;
+        }
         if (playQueue.isEmpty() && playQueue.isComplete()) {
             playbackListener.onPlaybackShutdown();
             return;
@@ -298,6 +333,11 @@ public class MediaSourceManager {
     //////////////////////////////////////////////////////////////////////////*/
 
     private boolean isPlayQueueReady() {
+        if (playQueue instanceof PersistentPlayQueue) {
+            final PersistentPlayQueue queue = (PersistentPlayQueue) playQueue;
+            return !queue.hasBlockedBoundary() && queue.getPendingError() == null
+                    && !queue.isEmpty();
+        }
         final boolean isWindowLoaded = playQueue.size() - playQueue.getIndex() > WINDOW_SIZE;
         return playQueue.isComplete() || isWindowLoaded;
     }
@@ -338,7 +378,10 @@ public class MediaSourceManager {
 
         if (isBlocked.get()) {
             isBlocked.set(false);
-            playbackListener.onPlaybackUnblock(playlist.getParentMediaSource());
+            // Persistent playback exposes only the head. ExoPlayer cannot run into a preserved
+            // tail across a pending source boundary; STATE_ENDED consumes via the owner instead.
+            playbackListener.onPlaybackUnblock(playQueue instanceof PersistentPlayQueue
+                    ? playlist.get(0) : playlist.getParentMediaSource());
             return true;
         }
 
@@ -405,6 +448,7 @@ public class MediaSourceManager {
         maybeClearLoaders();
 
         maybeLoadItem(itemsToLoad.center);
+        if (playQueue instanceof PersistentPlayQueue) return;
         for (final PlayerMediaItem item : itemsToLoad.neighbors) {
             maybeLoadItem(item);
         }
@@ -474,6 +518,17 @@ public class MediaSourceManager {
         }
 
         loadingItems.remove(item.getUuid());
+        if (playQueue instanceof PersistentPlayQueue) {
+            final PersistentPlayQueue queue = (PersistentPlayQueue) playQueue;
+            if (queue.hasBlockedBoundary() || queue.getPendingError() != null
+                    || !item.equals(queue.getItem())) return;
+            if (mediaSource instanceof FailedMediaSource) {
+                // FailedMediaSource normally plays silence and completes. That would consume an
+                // unfinished entry, so never attach it in Queue mode.
+                playbackListener.onPlaybackFailure(((FailedMediaSource) mediaSource).getError());
+                return;
+            }
+        }
 
         final int itemIndex = playQueue.indexOf(item);
         // Only update the playlist timeline for items at the current index or after.

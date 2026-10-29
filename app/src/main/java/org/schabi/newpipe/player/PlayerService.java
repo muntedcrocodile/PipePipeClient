@@ -115,6 +115,7 @@ public class PlayerService extends Service implements PlayerServiceInterface {
 
         player = new Player(this);
         player.setupFromView(binding);
+        player.getPersistentQueueController().start();
     }
 
     @Override

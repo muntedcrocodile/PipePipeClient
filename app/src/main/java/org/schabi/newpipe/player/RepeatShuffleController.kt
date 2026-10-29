@@ -34,6 +34,10 @@ class RepeatShuffleController(private val player: Player) {
         if (player.exoPlayerIsNull()) {
             return
         }
+        if (player.isPersistentQueueMode) {
+            player.persistentQueueController.shuffleUpcoming()
+            return
+        }
         val exoPlayer = player.simpleExoPlayer
         exoPlayer.shuffleModeEnabled = !exoPlayer.shuffleModeEnabled
     }
@@ -47,11 +51,17 @@ class RepeatShuffleController(private val player: Player) {
 
     fun setRepeatMode(repeatMode: RepeatMode) {
         if (!player.exoPlayerIsNull()) {
-            player.simpleExoPlayer.repeatMode = toExoPlayerRepeatMode(repeatMode)
+            player.simpleExoPlayer.repeatMode = toExoPlayerRepeatMode(
+                if (player.isPersistentQueueMode) RepeatMode.OFF else repeatMode
+            )
         }
     }
 
     fun onRepeatModeChanged(repeatMode: Int) {
+        if (player.isPersistentQueueMode && repeatMode != REPEAT_MODE_OFF) {
+            setRepeatMode(RepeatMode.OFF)
+            return
+        }
         val mode = fromExoPlayerRepeatMode(repeatMode)
         if (Player.DEBUG) {
             Log.d(Player.TAG, "ExoPlayer - onRepeatModeChanged() called with: "
@@ -62,6 +72,11 @@ class RepeatShuffleController(private val player: Player) {
     }
 
     fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+        if (player.isPersistentQueueMode) {
+            if (shuffleModeEnabled) player.simpleExoPlayer.shuffleModeEnabled = false
+            setShuffleButton(player.binding.shuffleButton, false)
+            return
+        }
         if (Player.DEBUG) {
             Log.d(Player.TAG, "ExoPlayer - onShuffleModeEnabledChanged() called with: "
                 + "mode = [$shuffleModeEnabled]")

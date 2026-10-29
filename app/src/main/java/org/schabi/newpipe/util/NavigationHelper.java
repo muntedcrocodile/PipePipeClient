@@ -50,6 +50,7 @@ import org.schabi.newpipe.local.subscription.SubscriptionFragment;
 import org.schabi.newpipe.local.subscription.SubscriptionListFragment;
 import org.schabi.newpipe.local.subscription.SubscriptionsImportFragment;
 import org.schabi.newpipe.player.PlayerIntentConstants;
+import org.schabi.newpipe.player.playqueue.PersistentQueueManager;
 import org.schabi.newpipe.player.PlayerService;
 import org.schabi.newpipe.player.PlayQueueActivity;
 import org.schabi.newpipe.player.Player;
@@ -199,15 +200,33 @@ public final class NavigationHelper {
     }
 
     /* ENQUEUE */
+    public static void enqueueOnPlayer(final Context context,
+                                       final PlayQueue queue,
+                                       final PlayerService.PlayerType playerType) {
+        if ((playerType == PlayerService.PlayerType.POPUP)
+                && !PermissionHelper.isPopupEnabled(context)) {
+            PermissionHelper.showPopupEnablementToast(context);
+            return;
+        }
+
+        if (!PersistentQueueManager.isEnabled(context)) {
+            Toast.makeText(context, R.string.enqueued, Toast.LENGTH_SHORT).show();
+        }
+        final Intent intent = getPlayerEnqueueIntent(context, DeviceUtils.getPlayerServiceClass(), queue);
+
+        intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, playerType.ordinal());
+        ContextCompat.startForegroundService(context, intent);
+    }
+
     public static void enqueueOnPlayer(final Context context, final PlayQueue queue) {
-        Toast.makeText(context, R.string.enqueued, Toast.LENGTH_SHORT).show();
-        startEnqueueIntent(context,
-                getPlayerEnqueueIntent(context, DeviceUtils.getPlayerServiceClass(), queue));
+        enqueueOnPlayer(context, queue, playerTypeForEnqueue());
     }
 
     /* ENQUEUE NEXT */
     public static void enqueueNextOnPlayer(final Context context, final PlayQueue queue) {
-        Toast.makeText(context, R.string.enqueued_next, Toast.LENGTH_SHORT).show();
+        if (!PersistentQueueManager.isEnabled(context)) {
+            Toast.makeText(context, R.string.enqueued_next, Toast.LENGTH_SHORT).show();
+        }
         startEnqueueIntent(context,
                 getPlayerEnqueueNextIntent(context, DeviceUtils.getPlayerServiceClass(), queue));
     }
