@@ -464,6 +464,11 @@ public abstract class BaseLocalListFragment<I, N> extends BaseStateFragment<I>
     @Override
     public void onSharedPreferenceChanged(final SharedPreferences sharedPreferences,
                                           final String key) {
+        // SharedPreferences can already have posted a listener snapshot when onDestroy
+        // unregisters us. Ignore that queued callback after this fragment has detached.
+        if (!isAdded()) {
+            return;
+        }
         if (key != null && (key.equals(getString(R.string.list_view_mode_key))
                 || key.equals(getString(R.string.grid_layout_enabled_key))
                 || key.equals(getString(R.string.grid_columns_key))
