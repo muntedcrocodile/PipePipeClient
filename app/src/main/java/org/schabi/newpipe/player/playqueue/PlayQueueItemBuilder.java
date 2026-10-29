@@ -22,13 +22,12 @@ public class PlayQueueItemBuilder {
     }
 
     public void buildStreamInfoItem(final PlayQueueItemHolder holder, final PlayerMediaItem item) {
-        if (!TextUtils.isEmpty(item.getTitle())) {
-            holder.itemVideoTitleView.setText(item.getTitle());
-        }
+        holder.itemVideoTitleView.setText(item.getTitle());
         holder.itemAdditionalDetailsView.setText(Localization.concatenateStrings(item.getUploader(),
                 NewPipe.getNameOfService(item.getServiceId())));
 
         if (item.getDuration() > 0) {
+            holder.itemDurationView.setVisibility(View.VISIBLE);
             holder.itemDurationView.setText(Localization.getDurationString(item.getDuration()));
         } else {
             holder.itemDurationView.setVisibility(View.GONE);
