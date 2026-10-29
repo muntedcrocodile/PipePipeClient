@@ -468,4 +468,36 @@ public class PersistentPlayQueueTest {
         }
     }
 
+    @Test
+    public void explicitSelectionOfVisibleFirstEntryMovesItAheadOfBlockedBoundary() {
+        queue.append(item("old"));
+        queue.insert(remote("source", "A"), true, false);
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        final String uuid = queue.getItem(0).getUuid();
+        queue.setIndex(0);
+        assertFalse(queue.hasBlockedBoundary());
+        assertEquals(uuid, queue.getItem().getUuid());
+        assertEquals(1, queue.size());
+        assertFalse(queue.isComplete());
+    }
+
+    @Test
+    public void clearCancelsOldRequestAndDoesNotBlockFetchingNewSource() throws Exception {
+        queue.insert(remote("old-source", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.fetch();
+        final Request old = pages.take();
+        queue.clear();
+        assertTrue(old.emitter.isDisposed());
+        queue.insert(remote("new-source", "B"), true, false);
+        queue.fetch();
+        final Request current = pages.take();
+        assertEquals("new-source", current.boundary.url);
+        current.succeed("B2", null);
+        awaitState(() -> queue.isComplete());
+        assertEquals(Arrays.asList("B", "B2"), urls(queue.getStreams()));
+    }
+
 }

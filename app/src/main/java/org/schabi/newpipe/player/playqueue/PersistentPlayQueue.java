@@ -76,6 +76,8 @@ public final class PersistentPlayQueue extends PlayQueue {
     private transient PersistentQueueStore store;
     private transient boolean frozen;
     private transient boolean fetching;
+    private transient io.reactivex.rxjava3.disposables.Disposable fetchTask;
+    private transient long fetchGeneration;
     private transient Throwable pendingError;
     private long structuralRevision;
 
@@ -120,6 +122,16 @@ public final class PersistentPlayQueue extends PlayQueue {
 
     synchronized void freeze() {
         frozen = true;
+        cancelFetch();
+    }
+
+    private void cancelFetch() {
+        fetchGeneration++;
+        fetching = false;
+        if (fetchTask != null) {
+            fetchTask.dispose();
+            fetchTask = null;
+        }
     }
 
     @Override
@@ -192,7 +204,7 @@ public final class PersistentPlayQueue extends PlayQueue {
     @Override
     public synchronized void setIndex(final int index) {
         final int nodeIndex = nodeIndex(index);
-        if (nodeIndex < 0 || index == 0) {
+        if (nodeIndex <= 0) {
             return;
         }
         final State candidate = state.copy();
@@ -340,6 +352,7 @@ public final class PersistentPlayQueue extends PlayQueue {
 
     synchronized void clear() {
         commit(new State());
+        cancelFetch();
         pendingError = null;
         broadcast(new InitEvent());
     }
@@ -446,8 +459,13 @@ public final class PersistentPlayQueue extends PlayQueue {
         fetching = true;
         pendingError = null;
         final State snapshot = state.copy();
-        Single.defer(() -> pageResolver.resolve(snapshot, boundary)).subscribeOn(Schedulers.io()).subscribe(result -> {
+        final long generation = ++fetchGeneration;
+        fetchTask = Single.defer(() -> pageResolver.resolve(snapshot, boundary))
+                .subscribeOn(Schedulers.io()).subscribe(result -> {
             synchronized (PersistentPlayQueue.this) {
+                if (generation != fetchGeneration) {
+                    return;
+                }
                 fetching = false;
                 if (frozen || !state.nodes.contains(boundary)) {
                     return;
@@ -469,6 +487,9 @@ public final class PersistentPlayQueue extends PlayQueue {
             }
         }, failure -> {
             synchronized (PersistentPlayQueue.this) {
+                if (generation != fetchGeneration) {
+                    return;
+                }
                 fetching = false;
                 if (!frozen) {
                     pendingError = failure;
