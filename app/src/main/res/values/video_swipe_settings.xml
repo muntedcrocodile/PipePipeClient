@@ -34,15 +34,37 @@
         <item>@string/mark_as_watched</item>
         <item>@string/show_channel_details</item>
         <item>@string/video_swipe_filter_channel</item>
-        <item>@string/video_swipe_remove_playlist</item>
-        <item>@string/video_swipe_delete_history</item>
     </string-array>
     <string-array name="video_swipe_action_values" translatable="false">
         <item>none</item><item>enqueue</item><item>enqueue_next</item>
         <item>background</item><item>popup</item><item>playlist</item>
         <item>download</item><item>share</item><item>browser</item>
         <item>watched</item><item>channel</item><item>filter_channel</item>
-        <item>remove_playlist</item><item>delete_history</item>
+    </string-array>
+    <string name="video_swipe_inherit">Use general swipe action</string>
+    <string name="video_swipe_playlist_left_title">Swipe left in local playlists</string>
+    <string name="video_swipe_playlist_right_title">Swipe right in local playlists</string>
+    <string name="video_swipe_history_left_title">Swipe left in watch history</string>
+    <string name="video_swipe_history_right_title">Swipe right in watch history</string>
+    <string name="video_swipe_left_action_playlist_key" translatable="false">video_swipe_left_action_playlist</string>
+    <string name="video_swipe_right_action_playlist_key" translatable="false">video_swipe_right_action_playlist</string>
+    <string name="video_swipe_left_action_history_key" translatable="false">video_swipe_left_action_history</string>
+    <string name="video_swipe_right_action_history_key" translatable="false">video_swipe_right_action_history</string>
+    <string-array name="video_swipe_playlist_entries">
+        <item>@string/video_swipe_inherit</item>
+        <item>@string/video_swipe_none</item>
+        <item>@string/video_swipe_remove_playlist</item>
+    </string-array>
+    <string-array name="video_swipe_playlist_values" translatable="false">
+        <item>inherit</item><item>none</item><item>remove_playlist</item>
+    </string-array>
+    <string-array name="video_swipe_history_entries">
+        <item>@string/video_swipe_inherit</item>
+        <item>@string/video_swipe_none</item>
+        <item>@string/video_swipe_delete_history</item>
+    </string-array>
+    <string-array name="video_swipe_history_values" translatable="false">
+        <item>inherit</item><item>none</item><item>delete_history</item>
     </string-array>
     <string-array name="persistent_queue_history_depth_entries">
         <item>0</item><item>10</item><item>20</item><item>50</item><item>100</item>

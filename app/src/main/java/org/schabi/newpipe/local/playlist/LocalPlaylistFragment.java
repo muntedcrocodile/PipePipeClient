@@ -1,5 +1,6 @@
 package org.schabi.newpipe.local.playlist;
 
+import org.schabi.newpipe.info_list.VideoSwipeActions;
 import android.content.*;
 import android.net.Uri;
 import android.os.Bundle;
@@ -265,6 +266,12 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
 
         headerBinding.playlistTitleView.setOnClickListener(view -> createRenameDialog());
 
+        VideoSwipeActions.protectTabGesture(this, itemsList, position -> {
+            final LocalItem item = selection.isActive() ? null : itemListAdapter.getSwipeItem(position);
+            return item instanceof PlaylistStreamEntry
+                    ? new VideoSwipeActions.Row(
+                            ((PlaylistStreamEntry) item).toStreamInfoItem(), () -> { }, null) : null;
+        });
         itemTouchHelper = new ItemTouchHelper(getItemTouchCallback());
         itemTouchHelper.attachToRecyclerView(itemsList);
 
@@ -1126,52 +1133,6 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
         saveChanges();
     }
 
-    private void showDeleteConfirmationDialog(final PlaylistStreamEntry item, 
-                                            final RecyclerView.ViewHolder viewHolder) {
-        new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.play_queue_remove)
-                .setMessage(R.string.remove_from_playlist_confirmation)
-                .setPositiveButton(R.string.play_queue_remove, (dialog, which) -> deleteItem(item))
-                .setNegativeButton(R.string.cancel, (dialog, which) -> {
-                    // Reset the item position if user cancels
-                    if (itemListAdapter != null) {
-                        itemListAdapter.notifyItemChanged(viewHolder.getBindingAdapterPosition());
-                    }
-                })
-                .setOnCancelListener(dialog -> {
-                    // Reset the item position if dialog is cancelled
-                    if (itemListAdapter != null) {
-                        itemListAdapter.notifyItemChanged(viewHolder.getBindingAdapterPosition());
-                    }
-                })
-                .show();
-    }
-
-    private void handleSwipeAction(final PlaylistStreamEntry item,
-                                 final RecyclerView.ViewHolder viewHolder) {
-        final String swipeAction = PreferenceManager.getDefaultSharedPreferences(requireContext())
-                .getString(getString(R.string.local_playlist_swipe_action_key), "delete");
-        
-        switch (swipeAction) {
-            case "delete":
-                showDeleteConfirmationDialog(item, viewHolder);
-                break;
-            case "enqueue":
-                final SinglePlayQueue queue = new SinglePlayQueue(item.toStreamInfoItem());
-                NavigationHelper.enqueueOnPlayer(requireContext(), queue);
-                if (itemListAdapter != null) {
-                    itemListAdapter.notifyItemChanged(viewHolder.getBindingAdapterPosition());
-                }
-                break;
-            case "disable":
-            default:
-                if (itemListAdapter != null) {
-                    itemListAdapter.notifyItemChanged(viewHolder.getBindingAdapterPosition());
-                }
-                break;
-        }
-    }
-
     private void saveChanges() {
         if (isModified == null || debouncedSaveSignal == null) {
             return;
@@ -1253,9 +1214,21 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
             swipeDirections = ItemTouchHelper.ACTION_STATE_IDLE;
         } else {
             // In list layout, use RIGHT for swipe (like PlayQueue)
-            swipeDirections = ItemTouchHelper.RIGHT;
+            swipeDirections = ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT;
         }
         return new ItemTouchHelper.SimpleCallback(directions, swipeDirections) {
+            private PlaylistStreamEntry swipingItem;
+
+            @Override
+            public void onSelectedChanged(@Nullable final RecyclerView.ViewHolder holder,
+                                          final int state) {
+                if (holder != null && state == ItemTouchHelper.ACTION_STATE_SWIPE) {
+                    final LocalItem item = itemListAdapter.getSwipeItem(holder.getBindingAdapterPosition());
+                    swipingItem = item instanceof PlaylistStreamEntry ? (PlaylistStreamEntry) item : null;
+                }
+                super.onSelectedChanged(holder, state);
+            }
+
             @Override
             public int interpolateOutOfBoundsScroll(@NonNull final RecyclerView recyclerView,
                                                     final int viewSize,
@@ -1302,40 +1275,36 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
 
             @Override
             public boolean isItemViewSwipeEnabled() {
-                return !isShowingAsTab && !selection.isActive();
+                return !selection.isActive();
             }
 
             @Override
             public int getSwipeDirs(@NonNull RecyclerView recyclerView, 
                                    @NonNull RecyclerView.ViewHolder viewHolder) {
-                // Disable swipe for header items (position 0)
-                if (itemListAdapter != null && viewHolder.getBindingAdapterPosition() == 0) {
-                    return 0; // No swipe directions allowed for header
-                }
-                
-                // Check if swipe is disabled in preferences
-                final String swipeAction = PreferenceManager.getDefaultSharedPreferences(requireContext())
-                        .getString(getString(R.string.local_playlist_swipe_action_key), "delete");
-                if ("disable".equals(swipeAction)) {
-                    return 0; // No swipe directions allowed when disabled
-                }
-                
-                return super.getSwipeDirs(recyclerView, viewHolder);
+                final LocalItem item = itemListAdapter == null || selection.isActive() ? null
+                        : itemListAdapter.getSwipeItem(viewHolder.getBindingAdapterPosition());
+                return item instanceof PlaylistStreamEntry
+                        ? VideoSwipeActions.directions(requireContext(),
+                                new VideoSwipeActions.Row(
+                                        ((PlaylistStreamEntry) item).toStreamInfoItem(), () -> { }, null))
+                        : 0;
             }
 
             @Override
             public void onSwiped(@NonNull final RecyclerView.ViewHolder viewHolder,
                                  final int swipeDir) {
-                if (itemListAdapter != null) {
-                    final int index = viewHolder.getBindingAdapterPosition() - 1;
-                    // Get the correct list based on whether filtering is enabled
-                    final List<LocalItem> currentItems = itemListAdapter.getCurrentItemsList();
-                    if (index != -1 && index < currentItems.size()) {
-                        final Object item = currentItems.get(index);
-                        if (item instanceof PlaylistStreamEntry) {
-                            handleSwipeAction((PlaylistStreamEntry) item, viewHolder);
-                        }
-                    }
+                final int position = viewHolder.getBindingAdapterPosition();
+                final LocalItem item = swipingItem != null ? swipingItem : itemListAdapter.getSwipeItem(position);
+                swipingItem = null;
+                if (position != RecyclerView.NO_POSITION) {
+                    itemListAdapter.notifyItemChanged(position);
+                }
+                if (item instanceof PlaylistStreamEntry) {
+                    final PlaylistStreamEntry entry = (PlaylistStreamEntry) item;
+                    VideoSwipeActions.execute(
+                            LocalPlaylistFragment.this,
+                            new VideoSwipeActions.Row(
+                                    entry.toStreamInfoItem(), () -> deleteItem(entry), null), swipeDir);
                 }
             }
         };
