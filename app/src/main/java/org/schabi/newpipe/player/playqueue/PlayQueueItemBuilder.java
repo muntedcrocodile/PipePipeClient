@@ -49,6 +49,8 @@ public class PlayQueueItemBuilder {
             return false;
         });
 
+        holder.itemHandle.setContentDescription(holder.itemRoot.getContext()
+                .getString(org.schabi.newpipe.R.string.detail_drag_description));
         holder.itemHandle.setOnTouchListener(getOnTouchListener(holder));
     }
 

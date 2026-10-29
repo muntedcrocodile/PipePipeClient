@@ -93,7 +93,7 @@ public final class PlayQueueActivity extends AppCompatActivity
         getMenuInflater().inflate(R.menu.menu_play_queue, m);
         getMenuInflater().inflate(R.menu.menu_play_queue_bg, m);
         if (org.schabi.newpipe.player.playqueue.PersistentQueueManager.isEnabled(this)) {
-            m.add(0, 9003, 10, "Clear queue");
+            m.add(0, R.id.queue_view_clear, 10, R.string.queue_view_clear);
         }
         onMaybeMuteChanged();
         // to avoid null reference
@@ -119,8 +119,8 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     @Override
     public boolean onOptionsItemSelected(final MenuItem item) {
-        if (item.getItemId() == 9003) {
-            org.schabi.newpipe.player.playqueue.QueueViewActions.clear(this);
+        if (item.getItemId() == R.id.queue_view_clear) {
+            org.schabi.newpipe.player.playqueue.QueueViewActions.clear(this, player);
             return true;
         }
         if (item.getItemId() == android.R.id.home) {
@@ -267,16 +267,8 @@ public final class PlayQueueActivity extends AppCompatActivity
         itemTouchHelper.attachToRecyclerView(queueControlBinding.playQueue);
 
         player.getPlayQueueAdapter().setSelectedListener(getOnSelectedListener());
-        player.getPlayQueueAdapter().showHistory(this, new PlayQueueItemBuilder.OnSelectedListener() {
-            @Override
-            public void selected(final PlayerMediaItem item, final View view) {
-                player.getPersistentQueueController().replayHistory(item);
-            }
-            @Override
-            public void held(final PlayerMediaItem item, final View view) { }
-            @Override
-            public void onStartDrag(final PlayQueueItemHolder holder) { }
-        });
+        player.getPlayQueueAdapter().showHistory(this,
+                org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player));
     }
 
     private void buildMetadata() {
@@ -335,8 +327,8 @@ public final class PlayQueueActivity extends AppCompatActivity
             @Override
             public void onSwiped(final int index) {
                 if (index != -1) {
-                    org.schabi.newpipe.player.playqueue.QueueViewActions.edit(
-                            PlayQueueActivity.this, () -> player.getPlayQueue().remove(index));
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.remove(
+                            PlayQueueActivity.this, player.getPlayQueue(), index);
                     player.getPlayQueueAdapter().notifyDataSetChanged();
                 }
             }
@@ -633,6 +625,9 @@ public final class PlayQueueActivity extends AppCompatActivity
         if (maybeNewAdapter != null
                 && queueControlBinding.playQueue.getAdapter() != maybeNewAdapter) {
             queueControlBinding.playQueue.setAdapter(maybeNewAdapter);
+            maybeNewAdapter.setSelectedListener(getOnSelectedListener());
+            maybeNewAdapter.showHistory(this,
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player));
         }
     }
 

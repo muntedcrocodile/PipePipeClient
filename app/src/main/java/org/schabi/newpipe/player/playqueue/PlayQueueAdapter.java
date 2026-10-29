@@ -84,6 +84,7 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
 
     private Disposable playQueueReactor;
     private Disposable historySubscription;
+    private QueueHistory historySource;
 
     public void showHistory(final Context context,
                             final PlayQueueItemBuilder.OnSelectedListener listener) {
@@ -93,9 +94,9 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
         if (historySubscription != null) {
             historySubscription.dispose();
         }
-        final QueueHistory source = QueueHistory.getInstance(context);
-        historySubscription = source.observe().subscribe(ignored ->
-                setHistory(source.excluding(playQueue.getItem()), listener));
+        historySource = QueueHistory.getInstance(context);
+        historySubscription = historySource.observe().subscribe(ignored ->
+                setHistory(historySource.excluding(playQueue.getItem()), listener));
     }
 
     public PlayQueueAdapter(final Context context, final PlayQueue playQueue) {
@@ -138,7 +139,11 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
     }
 
     private void onPlayQueueChanged(final PlayQueueEvent message) {
-        if (!history.isEmpty()) {
+        if (historySource != null) {
+            if (message.type() == org.schabi.newpipe.player.playqueue.events.PlayQueueEventType.RECOVERY) {
+                return;
+            }
+            history = historySource.excluding(playQueue.getItem());
             notifyDataSetChanged();
             return;
         }
@@ -245,8 +250,9 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
                 return new HFHolder(footer);
             case HISTORY_HEADER:
                 final TextView label = new TextView(parent.getContext());
-                label.setText("Recent history");
-                label.setPadding(16, 16, 16, 16);
+                label.setText(R.string.queue_view_history);
+                final int padding = (int) (16 * parent.getResources().getDisplayMetrics().density);
+                label.setPadding(padding, padding, padding, padding);
                 return new HFHolder(label);
             case HISTORY_ITEM:
             case ITEM_VIEW_TYPE_ID:

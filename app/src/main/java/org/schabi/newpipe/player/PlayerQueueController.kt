@@ -40,13 +40,8 @@ class PlayerQueueController(private val player: Player) {
         val playQueue = player.playQueue ?: return
         queueAdapter?.dispose()
         queueAdapter = PlayQueueAdapter(player.context, playQueue)
-        queueAdapter?.showHistory(player.context, object : PlayQueueItemBuilder.OnSelectedListener {
-            override fun selected(item: PlayerMediaItem, view: View) {
-                player.persistentQueueController.replayHistory(item)
-            }
-            override fun held(item: PlayerMediaItem, view: View) { }
-            override fun onStartDrag(viewHolder: PlayQueueItemHolder) { }
-        })
+        queueAdapter?.showHistory(player.context,
+            org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player))
         segmentsAdapter = StreamSegmentAdapter(getStreamSegmentListener())
     }
 
@@ -113,6 +108,11 @@ class PlayerQueueController(private val player: Player) {
                         player.playQueue as org.schabi.newpipe.player.playqueue.PersistentPlayQueue,
                         false))
                 }
+            }
+        } else {
+            player.binding.shuffleButton.setOnClickListener { player.onShuffleClicked() }
+            player.binding.addToPlaylistButton.setOnClickListener {
+                player.parentActivity?.let { player.onAddToPlaylistClicked(it.supportFragmentManager) }
             }
         }
         player.binding.addToPlaylistButton.visibility = View.VISIBLE
@@ -279,8 +279,8 @@ class PlayerQueueController(private val player: Player) {
 
         override fun onSwiped(index: Int) {
             if (index != -1) {
-                org.schabi.newpipe.player.playqueue.QueueViewActions.edit(player.context) {
-                    player.playQueue?.remove(index)
+                player.playQueue?.let {
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.remove(player.context, it, index)
                 }
                 queueAdapter?.notifyDataSetChanged()
             }

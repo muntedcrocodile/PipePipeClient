@@ -18,6 +18,7 @@ public final class QueueHistory {
     private static QueueHistory instance;
     private final SharedPreferences preferences;
     private final String enabledKey;
+    private io.reactivex.rxjava3.disposables.Disposable historyChanges;
     private List<PlayerMediaItem> recent = Collections.emptyList();
     private final BehaviorSubject<List<PlayerMediaItem>> items =
             BehaviorSubject.createDefault(Collections.emptyList());
@@ -32,11 +33,16 @@ public final class QueueHistory {
     }
 
     private QueueHistory(final Context context) {
+        this(context, new HistoryRecordManager(context).getStreamHistory());
+    }
+
+    QueueHistory(final Context context,
+                 final io.reactivex.rxjava3.core.Flowable<java.util.List<
+                         org.schabi.newpipe.database.history.model.StreamHistoryEntry>> history) {
         preferences = PreferenceManager.getDefaultSharedPreferences(context);
         enabledKey = context.getString(R.string.enable_watch_history_key);
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
-        new HistoryRecordManager(context).getStreamHistory()
-                .observeOn(AndroidSchedulers.mainThread())
+        historyChanges = history.observeOn(AndroidSchedulers.mainThread())
                 .subscribe(entries -> {
                     final List<PlayerMediaItem> result = new ArrayList<>();
                     final java.util.Set<String> seen = new java.util.HashSet<>();
@@ -54,12 +60,17 @@ public final class QueueHistory {
                 });
     }
 
-    private void publish() {
+    void close() {
+        preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener);
+        historyChanges.dispose();
+    }
+
+    private synchronized void publish() {
         int depth = 20;
         try {
             depth = Math.max(0, Integer.parseInt(preferences.getString(
                     "persistent_queue_history_depth", "20")));
-        } catch (final NumberFormatException ignored) {
+        } catch (final IllegalArgumentException | ClassCastException ignored) {
             // A malformed imported preference uses the default.
         }
         final List<PlayerMediaItem> result = preferences.getBoolean(enabledKey, true)

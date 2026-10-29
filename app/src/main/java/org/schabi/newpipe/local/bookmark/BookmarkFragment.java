@@ -214,7 +214,7 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
             return;
         }
         final android.widget.TextView link = new android.widget.TextView(requireContext());
-        link.setText("Queue");
+        link.setText(R.string.queue_view_title);
         final int padding = (int) (16 * getResources().getDisplayMetrics().density);
         link.setPadding(padding, padding, padding, padding);
         link.setOnClickListener(view -> getParentFragmentManager().beginTransaction()

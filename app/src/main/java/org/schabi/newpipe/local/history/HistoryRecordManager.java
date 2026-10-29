@@ -179,15 +179,20 @@ public class HistoryRecordManager {
      */
     public Completable deleteStreamHistoryAndState(final Collection<Long> streamIds) {
         final List<Long> ids = new ArrayList<>(streamIds);
-        return Completable.fromAction(() -> database.runInTransaction(() -> {
-            // stay well below SQLite's bound-variable limit
-            for (int start = 0; start < ids.size(); start += DELETE_BATCH_SIZE) {
-                final List<Long> chunk =
-                        ids.subList(start, Math.min(start + DELETE_BATCH_SIZE, ids.size()));
-                streamStateTable.deleteStates(chunk);
-                streamHistoryTable.deleteStreamHistories(chunk);
+        return Completable.fromAction(() -> {
+            database.runInTransaction(() -> {
+                // Stay well below SQLite's bound-variable limit.
+                for (int start = 0; start < ids.size(); start += DELETE_BATCH_SIZE) {
+                    final List<Long> chunk =
+                            ids.subList(start, Math.min(start + DELETE_BATCH_SIZE, ids.size()));
+                    streamStateTable.deleteStates(chunk);
+                    streamHistoryTable.deleteStreamHistories(chunk);
+                }
+            });
+            for (final long streamId : ids) {
+                clearQueueRecovery(streamId);
             }
-        })).subscribeOn(Schedulers.io());
+        }).subscribeOn(Schedulers.io());
     }
 
     public Single<Integer> deleteWholeStreamHistory() {
