@@ -88,19 +88,12 @@ class PlayerHistoryController(private val player: Player) {
      */
     fun startPlaybackWithSavedProgress(item: PlayerMediaItem, onResult: (Long?) -> Unit) {
         databaseUpdateDisposable.add(
-            recordManager.loadStreamState(item)
+            recordManager.loadPlaybackResumePosition(item)
                 .observeOn(AndroidSchedulers.mainThread())
                 // Do not place the continuation in doFinally() because
                 // it restarts playback after destroy()
                 //.doFinally()
-                .subscribe({ state ->
-                    if (!state.isFinished(item.duration)) {
-                        // resume playback only if the stream was not played to the end
-                        onResult(state.progressMillis)
-                    } else {
-                        onResult(null)
-                    }
-                }, { error ->
+                .subscribe({ position -> onResult(position) }, { error ->
                     if (Player.DEBUG) {
                         Log.w(Player.TAG, "Failed to start playback", error)
                     }
