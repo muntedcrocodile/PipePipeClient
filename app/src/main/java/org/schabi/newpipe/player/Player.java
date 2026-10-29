@@ -1213,18 +1213,18 @@ public final class Player {
     //////////////////////////////////////////////////////////////////////////*/
     //region Play queue, segments and streams
 
-    public void selectQueueItem(final PlayerMediaItem item) {
+    /** Returns whether the selection succeeded. Persistent failures are already reported. */
+    public boolean selectQueueItem(final PlayerMediaItem item) {
         if (isPersistentQueueMode()) {
-            persistentQueueController.select(item);
-            return;
+            return persistentQueueController.select(item);
         }
         if (playQueue == null || exoPlayerIsNull()) {
-            return;
+            return false;
         }
 
         final int index = playQueue.indexOf(item);
         if (index == -1) {
-            return;
+            return false;
         }
 
         if (playQueue.getIndex() == index && simpleExoPlayer.getCurrentMediaItemIndex() == index) {
@@ -1233,6 +1233,7 @@ public final class Player {
             saveStreamProgressState();
         }
         playQueue.setIndex(index);
+        return true;
     }
 
     void onPlayQueueEdited() {

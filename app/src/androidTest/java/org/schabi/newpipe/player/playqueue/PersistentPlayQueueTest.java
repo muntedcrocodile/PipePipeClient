@@ -3,8 +3,12 @@ package org.schabi.newpipe.player.playqueue;
 import static org.junit.Assert.*;
 
 import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.SharedPreferences;
+import android.content.res.Resources;
 
 import androidx.annotation.NonNull;
+import androidx.preference.PreferenceManager;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 import androidx.sqlite.db.SupportSQLiteOpenHelper;
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory;
@@ -15,6 +19,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.schabi.newpipe.player.Player;
+import org.schabi.newpipe.player.PlayerPlaybackState;
+import org.schabi.newpipe.player.mediasession.PlayerServiceInterface;
 import org.schabi.newpipe.player.mediaitem.PlayerMediaItem;
 
 import java.util.Arrays;
@@ -112,6 +119,150 @@ public class PersistentPlayQueueTest {
         open();
         assertEquals(1, queue.size());
         assertEquals("A", queue.getItem().getUrl());
+    }
+
+    @Test
+    public void failedPlayerSelectionDoesNotReachSuccessFeedbackOrCommit() {
+        queue.append(Arrays.asList(item("A"), item("B"), item("B")));
+        final PlayerMediaItem selected = queue.getItem(2);
+        final String original = queue.getItem().getUuid();
+        queue.setRecovery(0, 12_000);
+        queue.setRecovery(2, 34_000);
+        helper.getWritableDatabase().execSQL("CREATE TRIGGER reject_queue BEFORE INSERT ON "
+                + "persistent_queue_state BEGIN SELECT RAISE(ABORT,'selection disk failure'); END");
+        withPlayer(true, player -> {
+            // The controller reports its error using the player's real context. The view wrapper
+            // must emit neither a success toast nor a second error toast for that false result.
+            final Context noFurtherFeedback = new ContextWrapper(context) {
+                @Override public Resources getResources() {
+                    throw new AssertionError("An already reported failure must not show feedback");
+                }
+            };
+            assertFalse(QueueViewActions.editIfSuccessful(noFurtherFeedback,
+                    () -> player.selectQueueItem(selected)));
+            assertEquals(PlayerPlaybackState.PAUSED, player.getCurrentState());
+            assertEquals(original, queue.getItem().getUuid());
+            assertEquals(12_000, queue.getRecoveryPosition(0));
+            assertEquals(34_000, queue.getRecoveryPosition(2));
+        });
+        helper.close();
+        open();
+        assertEquals(original, queue.getItem().getUuid());
+        assertEquals(selected.getUuid(), queue.getItem(2).getUuid());
+    }
+
+    @Test
+    public void successfulPlayerSelectionReportsExactCommittedDuplicate() {
+        queue.append(Arrays.asList(item("A"), item("B"), item("B")));
+        final PlayerMediaItem selected = queue.getItem(2);
+        final String original = queue.getItem().getUuid();
+        queue.setRecovery(0, 12_000);
+        queue.setRecovery(2, 34_000);
+        withPlayer(true, player -> {
+            assertTrue(QueueViewActions.editIfSuccessful(context,
+                    () -> player.selectQueueItem(selected)));
+            assertEquals(selected.getUuid(), queue.getItem().getUuid());
+            assertEquals(original, queue.getItem(1).getUuid());
+            assertEquals(34_000, queue.getRecoveryPosition(0));
+            assertEquals(12_000, queue.getRecoveryPosition(1));
+        });
+        helper.close();
+        open();
+        assertEquals(selected.getUuid(), queue.getItem().getUuid());
+    }
+
+    @Test
+    public void ordinaryPlayerSelectionKeepsIndexBasedQueueAndRecovery() {
+        withPlayer(false, player -> {
+            final PlayQueue ordinary = new SinglePlayQueue(Collections.emptyList(), 0);
+            ordinary.append(Arrays.asList(item("A"), item("B")));
+            ordinary.setRecovery(0, 12_000);
+            setPlayerQueue(player, ordinary);
+            // No media is prepared: only exercise the ordinary selection/index boundary.
+            final var exo = new com.google.android.exoplayer2.ExoPlayer.Builder(context).build();
+            try {
+                final var field = Player.class.getDeclaredField("simpleExoPlayer");
+                field.setAccessible(true);
+                field.set(player, exo);
+                try {
+                    assertTrue(player.selectQueueItem(ordinary.getItem(1)));
+                    assertEquals(1, ordinary.getIndex());
+                    assertEquals("A", ordinary.getItem(0).getUrl());
+                    assertEquals(12_000, ordinary.getRecoveryPosition(0));
+                    assertFalse(player.selectQueueItem(item("missing")));
+                } finally {
+                    field.set(player, null);
+                }
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            } finally {
+                exo.release();
+            }
+        });
+    }
+
+    private static void setPlayerQueue(final Player player, final PlayQueue playQueue) {
+        try {
+            final var setter = Player.class.getDeclaredMethod("setPlayQueue", PlayQueue.class);
+            setter.setAccessible(true);
+            setter.invoke(player, playQueue);
+        } catch (final ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private void withPlayer(final boolean persistent, final java.util.function.Consumer<Player> test) {
+        final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        final boolean hadPreference = prefs.contains("persistent_queue_enabled");
+        final boolean oldPreference = prefs.getBoolean("persistent_queue_enabled", true);
+        final TestService service = new TestService(context);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            prefs.edit().putBoolean("persistent_queue_enabled", persistent).commit();
+            final PlayerServiceInterface bridge = (PlayerServiceInterface)
+                    java.lang.reflect.Proxy.newProxyInstance(PlayerServiceInterface.class.getClassLoader(),
+                            new Class<?>[]{PlayerServiceInterface.class}, (proxy, method, args) -> {
+                                if (method.getName().equals("getInstance")) return service;
+                                if (method.getName().equals("isLandscape")) return false;
+                                throw new AssertionError("Unexpected service call: " + method.getName());
+                            });
+            Player player = null;
+            try {
+                player = new Player(bridge);
+                setPlayerQueue(player, queue);
+                test.accept(player);
+            } finally {
+                try {
+                    if (player != null) closeUnstartedPlayer(player);
+                } finally {
+                    final SharedPreferences.Editor restore = prefs.edit();
+                    if (hadPreference) restore.putBoolean("persistent_queue_enabled", oldPreference);
+                    else restore.remove("persistent_queue_enabled");
+                    restore.commit();
+                }
+            }
+        });
+    }
+
+    private static void closeUnstartedPlayer(final Player player) {
+        // setupFromView/start were never called: there is no view binding, source manager or
+        // registered receiver. Release the constructor-owned resources without UI teardown.
+        player.getPersistentQueueController().close();
+        try {
+            final var sponsor = Player.class.getDeclaredMethod("getSponsorBlockController");
+            sponsor.setAccessible(true);
+            ((org.schabi.newpipe.player.SponsorBlockController) sponsor.invoke(player)).destroy();
+            final var selector = Player.class.getDeclaredMethod("getTrackSelector");
+            selector.setAccessible(true);
+            ((com.google.android.exoplayer2.trackselection.DefaultTrackSelector)
+                    selector.invoke(player)).release();
+        } catch (final ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private static final class TestService extends android.app.Service {
+        TestService(final Context context) { attachBaseContext(context); }
+        @Override public android.os.IBinder onBind(final android.content.Intent intent) { return null; }
     }
 
     @Test
