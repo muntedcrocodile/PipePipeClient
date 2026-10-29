@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="video_swipe_enabled_key" translatable="false">video_swipe_enabled</string>
+    <string name="video_swipe_left_action_key" translatable="false">video_swipe_left_action</string>
+    <string name="video_swipe_right_action_key" translatable="false">video_swipe_right_action</string>
+    <string name="persistent_queue_enabled_key" translatable="false">persistent_queue_enabled</string>
+    <string name="persistent_queue_visible_key" translatable="false">persistent_queue_visible</string>
+    <string name="persistent_queue_history_depth_key" translatable="false">persistent_queue_history_depth</string>
+    <string name="video_swipe_title">Video row swipes</string>
+    <string name="video_swipe_summary">Swipe list rows to run the selected action. Physical left and right do not change with language. Cards and grids are unchanged.</string>
+    <string name="video_swipe_left_title">Swipe left</string>
+    <string name="video_swipe_right_title">Swipe right</string>
+    <string name="video_swipe_none">Do nothing</string>
+    <string name="video_swipe_remove_playlist">Remove from this playlist</string>
+    <string name="video_swipe_delete_history">Delete from watch history</string>
+    <string name="video_swipe_delete_history_confirm">Delete this video from watch history and remove its saved playback position?</string>
+    <string name="video_swipe_unavailable">This action is unavailable for this video or source screen.</string>
+    <string name="persistent_queue_title">Persistent Queue mode</string>
+    <string name="persistent_queue_summary">Keep unfinished videos and their progress across restarts. Switching modes stops playback; restoration waits for Play.</string>
+    <string name="persistent_queue_visible_title">Show queue playlist</string>
+    <string name="persistent_queue_visible_summary">Show the unfinished queue in playlists. Hiding it keeps its videos and progress.</string>
+    <string name="persistent_queue_history_depth_title">Queue history depth</string>
+    <string name="video_swipe_filter_channel">Filter channel</string>
+    <string-array name="video_swipe_action_entries">
+        <item>@string/video_swipe_none</item>
+        <item>@string/enqueue_stream</item>
+        <item>@string/enqueue_next_stream</item>
+        <item>@string/start_here_on_background</item>
+        <item>@string/start_here_on_popup</item>
+        <item>@string/add_to_playlist</item>
+        <item>@string/download</item>
+        <item>@string/share</item>
+        <item>@string/open_in_browser</item>
+        <item>@string/mark_as_watched</item>
+        <item>@string/show_channel_details</item>
+        <item>@string/video_swipe_filter_channel</item>
+        <item>@string/video_swipe_remove_playlist</item>
+        <item>@string/video_swipe_delete_history</item>
+    </string-array>
+    <string-array name="video_swipe_action_values" translatable="false">
+        <item>none</item><item>enqueue</item><item>enqueue_next</item>
+        <item>background</item><item>popup</item><item>playlist</item>
+        <item>download</item><item>share</item><item>browser</item>
+        <item>watched</item><item>channel</item><item>filter_channel</item>
+        <item>remove_playlist</item><item>delete_history</item>
+    </string-array>
+    <string-array name="persistent_queue_history_depth_entries">
+        <item>0</item><item>10</item><item>20</item><item>50</item><item>100</item>
+    </string-array>
+    <string-array name="persistent_queue_history_depth_values" translatable="false">
+        <item>0</item><item>10</item><item>20</item><item>50</item><item>100</item>
+    </string-array>
+</resources>
