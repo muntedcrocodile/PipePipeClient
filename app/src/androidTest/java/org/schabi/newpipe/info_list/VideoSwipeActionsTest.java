@@ -64,7 +64,7 @@ public class VideoSwipeActionsTest {
     private static final String[] KEYS = {"video_swipe_enabled", "video_swipe_left_action",
         "video_swipe_right_action", "video_swipe_left_action_playlist",
         "video_swipe_right_action_playlist", "video_swipe_left_action_history",
-        "video_swipe_right_action_history", "local_playlist_swipe_action"};
+        "video_swipe_right_action_history", "local_playlist_swipe_action_key"};
 
     @Before
     public void setUp() {
@@ -99,9 +99,24 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void sparseVideoWithoutUploaderCanBecomeDistinctQueueOccurrences() {
+        final StreamInfoItem sparse = video("sparse");
+        assertNull(sparse.getUploaderName());
+        final var first = org.schabi.newpipe.player.mediaitem.PlayerMediaItem.forStreamInfoItem(sparse);
+        final var second = org.schabi.newpipe.player.mediaitem.PlayerMediaItem.forStreamInfoItem(sparse);
+        assertEquals("", first.getUploaderName());
+        assertEquals(sparse.getUrl(), first.getUrl());
+        assertEquals(sparse.getName(), first.getTitle());
+        assertEquals(-1, first.getDuration());
+        assertNull(first.getUploaderUrl());
+        org.junit.Assert.assertNotEquals(first.getUuid(), second.getUuid());
+        assertNull(sparse.getUploaderName());
+    }
+
+    @Test
     public void newControlsDefaultOnAndExplicitOptOutAndNoneHaveNoFallback() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
-        prefs.edit().putString("local_playlist_swipe_action", "disable").commit();
+        prefs.edit().putString(context.getString(R.string.local_playlist_swipe_action_key), "disable").commit();
         assertEquals("enqueue_next", VideoSwipeActions.playlistAction(
                 context, playlist, ItemTouchHelper.LEFT));
         assertEquals("enqueue", VideoSwipeActions.playlistAction(
@@ -153,7 +168,7 @@ public class VideoSwipeActionsTest {
         // Explicit opt-outs retain legacy playlist behavior, always physical right.
         assertEquals("legacy_delete", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
         for (final String legacy : Arrays.asList("delete", "enqueue", "disable")) {
-            prefs.edit().putString("local_playlist_swipe_action", legacy).commit();
+            prefs.edit().putString(context.getString(R.string.local_playlist_swipe_action_key), legacy).commit();
             assertEquals("delete".equals(legacy) ? "legacy_delete"
                             : "enqueue".equals(legacy) ? "enqueue" : "none",
                     VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
@@ -166,7 +181,7 @@ public class VideoSwipeActionsTest {
                 .putString("video_swipe_left_action", "none")
                 .putString("video_swipe_right_action", "none").commit();
         for (final String legacy : Arrays.asList("delete", "enqueue", "disable")) {
-            prefs.edit().putString("local_playlist_swipe_action", legacy).commit();
+            prefs.edit().putString(context.getString(R.string.local_playlist_swipe_action_key), legacy).commit();
             assertEquals("none", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
             assertEquals(0, VideoSwipeActions.playlistDirections(context, playlist, false));
             assertEquals(0, VideoSwipeActions.playlistDirections(context, playlist, true));
@@ -246,6 +261,77 @@ public class VideoSwipeActionsTest {
             final SwipeFixture fixture = new SwipeFixture(activity, true);
             assertDeferredDirections(fixture);
         }));
+    }
+
+    @Test
+    public void physicalSourceRowSwipesDispatchCapturedVideosInBothLayoutDirections() {
+        assertPhysicalSwipes(false);
+    }
+
+    @Test
+    public void physicalPlaylistRowSwipesDispatchCapturedOccurrencesInBothLayoutDirections() {
+        assertPhysicalSwipes(true);
+    }
+
+    private void assertPhysicalSwipes(final boolean playlist) {
+        withActivity(activity -> {
+            for (final int direction : Arrays.asList(View.LAYOUT_DIRECTION_LTR,
+                    View.LAYOUT_DIRECTION_RTL)) {
+                final SwipeFixture[] fixture = new SwipeFixture[1];
+                onMain(() -> {
+                    fixture[0] = new SwipeFixture(activity, playlist);
+                    fixture[0].list.setLayoutDirection(direction);
+                    activity.setContentView(fixture[0].list);
+                    new ItemTouchHelper(fixture[0].callback).attachToRecyclerView(fixture[0].list);
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                swipeRow(fixture[0].list, 0, true);
+                awaitSubmitted(fixture[0], 1);
+                swipeRow(fixture[0].list, 1, false);
+                awaitSubmitted(fixture[0], 2);
+                onMain(() -> {
+                    assertEquals(Arrays.asList("https://example.com/A:next",
+                            "https://example.com/B:end"), fixture[0].context.submitted);
+                    assertEquals(2, fixture[0].adapter.getItemCount());
+                });
+            }
+        });
+    }
+
+    private static void awaitSubmitted(final SwipeFixture fixture, final int count) {
+        final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
+        final int[] actual = {0};
+        do {
+            onMain(() -> actual[0] = fixture.context.submitted.size());
+            if (actual[0] >= count) return;
+            android.os.SystemClock.sleep(25);
+        } while (android.os.SystemClock.uptimeMillis() < deadline);
+        assertEquals("Physical swipe must reach the production service boundary", count, actual[0]);
+    }
+
+    private static void swipeRow(final RecyclerView list, final int position, final boolean left) {
+        final float[] coordinates = new float[3];
+        onMain(() -> {
+            final View row = list.findViewHolderForAdapterPosition(position).itemView;
+            final int[] location = new int[2];
+            row.getLocationOnScreen(location);
+            coordinates[0] = location[0] + row.getWidth() * (left ? 0.85f : 0.15f);
+            coordinates[1] = location[0] + row.getWidth() * (left ? 0.05f : 0.95f);
+            coordinates[2] = location[1] + row.getHeight() / 2f;
+        });
+        final var instrumentation = InstrumentationRegistry.getInstrumentation();
+        final long down = android.os.SystemClock.uptimeMillis();
+        for (int i = 0; i <= 20; i++) {
+            final int action = i == 0 ? android.view.MotionEvent.ACTION_DOWN
+                    : i == 20 ? android.view.MotionEvent.ACTION_UP : android.view.MotionEvent.ACTION_MOVE;
+            final var event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(),
+                    action, coordinates[0] + (coordinates[1] - coordinates[0]) * i / 20f,
+                    coordinates[2], 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            instrumentation.sendPointerSync(event);
+            event.recycle();
+            android.os.SystemClock.sleep(16);
+        }
     }
 
     private void assertDeferredDirections(final SwipeFixture fixture) {
