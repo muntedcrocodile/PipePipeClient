@@ -16,6 +16,7 @@ import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.subjects.SingleSubject;
 import java.util.Collections;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -100,6 +101,58 @@ public class PersistentSourcePlaybackTest {
     }
 
     @Test
+    public void delayedHeadExtractionStartsAfterUpcomingAppend() throws Exception {
+        assertDelayedHeadStartsAfterUpcomingEdit(false);
+    }
+
+    @Test
+    public void delayedHeadExtractionStartsAfterUpcomingRemoval() throws Exception {
+        assertDelayedHeadStartsAfterUpcomingEdit(true);
+    }
+
+    private void assertDelayedHeadStartsAfterUpcomingEdit(final boolean remove) throws Exception {
+        final var instrumentation = InstrumentationRegistry.getInstrumentation();
+        queue.append(PlayerMediaItem.forStreamInfoItem(stream("head")));
+        if (remove) queue.append(PlayerMediaItem.forStreamInfoItem(stream("upcoming")));
+        final PlayerMediaItem head = queue.getItem();
+        final SingleSubject<StreamInfo> pending = SingleSubject.create();
+        final AtomicInteger requests = new AtomicInteger();
+        start(item -> {
+            assertEquals(head.getUuid(), item.getUuid());
+            requests.incrementAndGet();
+            return pending;
+        });
+        instrumentation.waitForIdleSync();
+        assertTrue("Head extraction must be outstanding before the edit", pending.hasObservers());
+        instrumentation.runOnMainSync(() -> {
+            if (remove) queue.remove(1);
+            else queue.append(PlayerMediaItem.forStreamInfoItem(stream("upcoming")));
+        });
+        instrumentation.waitForIdleSync();
+        assertEquals(remove ? 1 : 2, queue.size());
+        assertEquals(1, requests.get());
+        assertEquals(1, playback.blocks.get());
+        assertTrue(playback.started.isEmpty());
+
+        instrumentation.runOnMainSync(() -> pending.onSuccess(info(head)));
+        assertEquals("head", playback.started.poll(5, TimeUnit.SECONDS));
+        assertEquals(head.getUuid(), playback.synchronizedHeads.poll(5, TimeUnit.SECONDS));
+        assertTrue(playback.failures.isEmpty());
+        assertEquals(head.getUuid(), queue.getItem().getUuid());
+
+        // Further edits while attached must neither restart extraction nor interrupt this head.
+        instrumentation.runOnMainSync(() -> {
+            if (!remove) queue.remove(1);
+            queue.append(PlayerMediaItem.forStreamInfoItem(stream("another-upcoming")));
+        });
+        instrumentation.waitForIdleSync();
+        assertEquals(1, requests.get());
+        assertEquals(1, playback.blocks.get());
+        assertTrue(playback.started.isEmpty());
+        assertTrue(playback.failures.isEmpty());
+    }
+
+    @Test
     public void failedExtractionRetainsOccurrenceAndRebuiltManagerRetriesSameHead() throws Exception {
         queue.append(PlayerMediaItem.forStreamInfoItem(stream("retry")));
         final String occurrence = queue.getItem().getUuid();
@@ -147,15 +200,19 @@ public class PersistentSourcePlaybackTest {
 
     private static final class RecordingPlayback implements PlaybackListener {
         final LinkedBlockingQueue<String> started = new LinkedBlockingQueue<>();
+        final LinkedBlockingQueue<String> synchronizedHeads = new LinkedBlockingQueue<>();
+        final AtomicInteger blocks = new AtomicInteger();
         final LinkedBlockingQueue<Throwable> failures = new LinkedBlockingQueue<>();
         @Override public boolean isApproachingPlaybackEdge(final long gap) { return false; }
-        @Override public void onPlaybackBlock() { }
+        @Override public void onPlaybackBlock() { blocks.incrementAndGet(); }
         @Override public void onPlaybackFailure(final Throwable error) { failures.add(error); }
         @Override public void onPlaybackUnblock(final MediaSource source) {
             started.add(ExoMediaItems.fromMediaItem(source.getMediaItem()).get().getUrl());
         }
         @Override public void onPlaybackSynchronize(final PlayerMediaItem item,
-                                                    final boolean wasBlocked) { }
+                                                    final boolean wasBlocked) {
+            synchronizedHeads.add(item.getUuid());
+        }
         @Override public MediaSource sourceOf(final PlayerMediaItem item, final StreamInfo info) {
             return new TaggedSource(item);
         }
