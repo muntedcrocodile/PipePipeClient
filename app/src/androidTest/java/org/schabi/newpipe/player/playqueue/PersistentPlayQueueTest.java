@@ -500,4 +500,36 @@ public class PersistentPlayQueueTest {
         assertEquals(Arrays.asList("B", "B2"), urls(queue.getStreams()));
     }
 
+    @Test
+    public void serializedIntentCacheReturnsIdenticalLiveOwnerIncludingPendingSources() {
+        queue.insert(remote("source", "A"), true, false);
+        final String key = org.schabi.newpipe.util.SerializedCache.getInstance()
+                .put(queue, PlayQueue.class);
+        assertNotNull(key);
+        final PlayQueue restored = org.schabi.newpipe.util.SerializedCache.getInstance()
+                .take(key, PlayQueue.class);
+        assertSame(queue, restored);
+        assertFalse(restored.isComplete());
+        restored.setRecovery(0, 321);
+        assertEquals(321, queue.getRecoveryPosition(0));
+    }
+
+    @Test
+    public void directQueueSelectionCheckpointsInterruptedHeadBeforeReordering() {
+        queue.append(Arrays.asList(item("A"), item("B")));
+        final String interrupted = queue.getItem().getUuid();
+        queue.setBeforeHeadChange(() -> queue.setRecovery(0, 8765));
+        queue.setIndex(1);
+        assertEquals(interrupted, queue.getItem(1).getUuid());
+        assertEquals(8765, queue.getRecoveryPosition(1));
+        queue.insert(new SinglePlayQueue(Collections.singletonList(stream("C")), 0), true, false);
+        assertEquals("B", queue.getItem(1).getUrl());
+        assertEquals(8765, queue.getRecoveryPosition(1));
+        queue.setBeforeHeadChange(null);
+        helper.close();
+        open();
+        assertEquals(8765, queue.getRecoveryPosition(1));
+        assertEquals(8765, queue.getRecoveryPosition(2));
+    }
+
 }
