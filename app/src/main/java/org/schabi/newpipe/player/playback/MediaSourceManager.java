@@ -342,7 +342,10 @@ public class MediaSourceManager {
     }
 
     private boolean isPlaybackReady() {
-        if (playlist.size() != playQueue.size()) {
+        // Persistent playback attaches only the head source. Upcoming edits intentionally do
+        // not rebuild that source or its placeholder snapshot; their count can change while
+        // extraction is outstanding. The next head change rebuilds the snapshot from the owner.
+        if (!(playQueue instanceof PersistentPlayQueue) && playlist.size() != playQueue.size()) {
             return false;
         }
 
