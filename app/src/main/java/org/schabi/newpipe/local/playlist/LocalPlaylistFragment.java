@@ -1249,7 +1249,8 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
 
             @Override
             public boolean isItemViewSwipeEnabled() {
-                return !selection.isActive();
+                return !selection.isActive()
+                        && (VideoSwipeActions.isEnabled(requireContext()) || !isShowingAsTab);
             }
 
             @Override
@@ -1258,9 +1259,10 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
                 final LocalItem item = itemListAdapter == null || selection.isActive() ? null
                         : itemListAdapter.getSwipeItem(viewHolder.getBindingAdapterPosition());
                 return item instanceof PlaylistStreamEntry
-                        ? VideoSwipeActions.directions(requireContext(),
+                        ? VideoSwipeActions.playlistDirections(requireContext(),
                                 new VideoSwipeActions.Row(
-                                        ((PlaylistStreamEntry) item).toStreamInfoItem(), () -> { }, null))
+                                        ((PlaylistStreamEntry) item).toStreamInfoItem(), () -> { }, null),
+                                isShowingAsTab)
                         : 0;
             }
 
@@ -1275,10 +1277,10 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
                 }
                 if (item instanceof PlaylistStreamEntry) {
                     final PlaylistStreamEntry entry = (PlaylistStreamEntry) item;
-                    VideoSwipeActions.execute(
+                    VideoSwipeActions.executePlaylist(
                             LocalPlaylistFragment.this,
                             new VideoSwipeActions.Row(
-                                    entry.toStreamInfoItem(), () -> deleteItem(entry), null), swipeDir);
+                                    entry.toStreamInfoItem(), () -> deleteItem(entry), null), swipeDir, isShowingAsTab);
                 }
             }
         };

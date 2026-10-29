@@ -72,7 +72,7 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
-    public void upgradeDoesNotEnableLegacyDeletionAndNoneHasNoFallback() {
+    public void newControlsStayOffUntilOptInAndNoneHasNoFallback() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
         prefs.edit().putString("local_playlist_swipe_action", "delete").commit();
         assertEquals(0, VideoSwipeActions.directions(context, playlist));
@@ -84,6 +84,34 @@ public class VideoSwipeActionsTest {
         assertEquals(0, VideoSwipeActions.directions(context, playlist));
         assertEquals(ItemTouchHelper.RIGHT,
                 VideoSwipeActions.directions(context, new VideoSwipeActions.Row(video("one"))));
+    }
+
+    @Test
+    public void legacyPlaylistActionsApplyOnlyBeforeOptIn() {
+        final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
+        // Existing users retain the old default and their explicit action, always physical right.
+        assertEquals("legacy_delete", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
+        for (final String legacy : Arrays.asList("delete", "enqueue", "disable")) {
+            prefs.edit().putString("local_playlist_swipe_action", legacy).commit();
+            assertEquals("delete".equals(legacy) ? "legacy_delete"
+                            : "enqueue".equals(legacy) ? "enqueue" : "none",
+                    VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
+            assertEquals("none", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.LEFT));
+            assertEquals("disable".equals(legacy) ? 0 : ItemTouchHelper.RIGHT,
+                    VideoSwipeActions.playlistDirections(context, playlist, false));
+            assertEquals(0, VideoSwipeActions.playlistDirections(context, playlist, true));
+        }
+        prefs.edit().putBoolean("video_swipe_enabled", true)
+                .putString("video_swipe_left_action", "none")
+                .putString("video_swipe_right_action", "none").commit();
+        for (final String legacy : Arrays.asList("delete", "enqueue", "disable")) {
+            prefs.edit().putString("local_playlist_swipe_action", legacy).commit();
+            assertEquals("none", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
+            assertEquals(0, VideoSwipeActions.playlistDirections(context, playlist, false));
+            assertEquals(0, VideoSwipeActions.playlistDirections(context, playlist, true));
+        }
+        prefs.edit().putString("video_swipe_left_action", "enqueue_next").commit();
+        assertEquals(ItemTouchHelper.LEFT, VideoSwipeActions.playlistDirections(context, playlist, true));
     }
 
     @Test
