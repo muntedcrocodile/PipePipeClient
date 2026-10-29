@@ -67,7 +67,11 @@ public final class PlaylistCreationDialog extends PlaylistDialog {
 
                     playlistManager.createPlaylist(name, getStreamEntities())
                             .observeOn(AndroidSchedulers.mainThread())
-                            .subscribe(longs -> successToast.show());
+                            .subscribe(longs -> successToast.show(), error ->
+                                    Toast.makeText(requireContext(),
+                                            getString(R.string.queue_view_save_failed,
+                                                    error.getMessage()),
+                                            Toast.LENGTH_LONG).show());
                 });
         return dialogBuilder.create();
     }
