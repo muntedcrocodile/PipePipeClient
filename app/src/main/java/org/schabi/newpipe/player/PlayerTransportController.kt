@@ -52,6 +52,10 @@ class PlayerTransportController(private val player: Player) {
             }
         }
 
+        if (player.isPersistentQueueMode && player.persistentQueueController.retryPending()) return
+        if (player.simpleExoPlayer.playbackState == com.google.android.exoplayer2.Player.STATE_IDLE) {
+            player.simpleExoPlayer.prepare()
+        }
         player.simpleExoPlayer.play()
         player.saveStreamProgressState()
     }
@@ -85,6 +89,10 @@ class PlayerTransportController(private val player: Player) {
     }
 
     fun playPrevious() {
+        if (player.isPersistentQueueMode) {
+            player.persistentQueueController.previous()
+            return
+        }
         if (Player.DEBUG) {
             Log.d(Player.TAG, "onPlayPrevious() called")
         }
@@ -109,6 +117,10 @@ class PlayerTransportController(private val player: Player) {
     }
 
     fun playNext() {
+        if (player.isPersistentQueueMode) {
+            player.persistentQueueController.consume(false)
+            return
+        }
         if (Player.DEBUG) {
             Log.d(Player.TAG, "onPlayNext() called")
         }
@@ -163,6 +175,7 @@ class PlayerTransportController(private val player: Player) {
         }
 
         player.simpleExoPlayer.seekTo(normalizedPositionMillis)
+        player.saveStreamProgressState()
     }
 
     private fun seekBy(offsetMillis: Long) {
@@ -175,6 +188,7 @@ class PlayerTransportController(private val player: Player) {
     fun seekToDefault() {
         if (!player.exoPlayerIsNull()) {
             player.simpleExoPlayer.seekToDefaultPosition()
+            player.saveStreamProgressState()
         }
     }
 
@@ -238,6 +252,7 @@ class PlayerTransportController(private val player: Player) {
             return
         }
         player.setCurrentItem(item)
+        player.persistentQueueController.resumeHead()
 
         // Check if on wrong window
         if (currentPlayQueueIndex != playQueue.index) {
@@ -274,7 +289,7 @@ class PlayerTransportController(private val player: Player) {
                 player.simpleExoPlayer.seekTo(
                     currentPlayQueueIndex, playQueue.getRecoveryPosition(item)
                 )
-                playQueue.unsetRecovery(currentPlayQueueIndex)
+                if (!player.isPersistentQueueMode) playQueue.unsetRecovery(currentPlayQueueIndex)
             } else {
                 player.simpleExoPlayer.seekToDefaultPosition(currentPlayQueueIndex)
             }

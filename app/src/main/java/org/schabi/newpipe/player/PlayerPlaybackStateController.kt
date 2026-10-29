@@ -35,6 +35,7 @@ class PlayerPlaybackStateController(private val player: Player) {
         } else {
             player.simpleExoPlayer.playbackState
         }
+        if (!playWhenReady) player.persistentQueueController.checkpoint()
         updatePlaybackState(playWhenReady, playbackState)
     }
 
@@ -95,6 +96,10 @@ class PlayerPlaybackStateController(private val player: Player) {
             }
 
             com.google.android.exoplayer2.Player.STATE_ENDED -> { // 4
+                if (player.isPersistentQueueMode) {
+                    player.persistentQueueController.consume(true)
+                    return
+                }
                 changeState(PlayerPlaybackState.COMPLETED)
                 player.saveStreamProgressStateCompleted()
                 player.isPrepared = false

@@ -67,7 +67,10 @@ class PlayerHistoryController(private val player: Player) {
         }
         // Save current position. It will help to restore this position once a user
         // wants to play prev or next stream from the queue
-        playQueue.setRecovery(playQueue.index, player.simpleExoPlayer.contentPosition)
+        // Persistent occurrence checkpoints are written once by Player's durable controller.
+        if (playQueue !is org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+            playQueue.setRecovery(playQueue.index, player.simpleExoPlayer.contentPosition)
+        }
         saveStreamProgressState(player.simpleExoPlayer.currentPosition)
     }
 

@@ -51,6 +51,7 @@ import org.schabi.newpipe.local.subscription.SubscriptionFragment;
 import org.schabi.newpipe.local.subscription.SubscriptionListFragment;
 import org.schabi.newpipe.local.subscription.SubscriptionsImportFragment;
 import org.schabi.newpipe.player.PlayerIntentConstants;
+import org.schabi.newpipe.player.playqueue.PersistentQueueManager;
 import org.schabi.newpipe.player.PlayerService;
 import org.schabi.newpipe.player.PlayerService.PlayerType;
 import org.schabi.newpipe.player.PlayQueueActivity;
@@ -201,7 +202,9 @@ public final class NavigationHelper {
             return;
         }
 
-        Toast.makeText(context, R.string.enqueued, Toast.LENGTH_SHORT).show();
+        if (!PersistentQueueManager.isEnabled(context)) {
+            Toast.makeText(context, R.string.enqueued, Toast.LENGTH_SHORT).show();
+        }
         final Intent intent = getPlayerEnqueueIntent(context, DeviceUtils.getPlayerServiceClass(), queue);
 
         intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, playerType.ordinal());
@@ -225,7 +228,9 @@ public final class NavigationHelper {
             Log.e(TAG, "Enqueueing next but no player is open; defaulting to background player");
             playerType = PlayerService.PlayerType.AUDIO;
         }
-        Toast.makeText(context, R.string.enqueued_next, Toast.LENGTH_SHORT).show();
+        if (!PersistentQueueManager.isEnabled(context)) {
+            Toast.makeText(context, R.string.enqueued_next, Toast.LENGTH_SHORT).show();
+        }
         final Intent intent = getPlayerEnqueueNextIntent(context, DeviceUtils.getPlayerServiceClass(), queue);
 
         intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, playerType.ordinal());

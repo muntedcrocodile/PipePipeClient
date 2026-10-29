@@ -123,6 +123,11 @@ public class PlayerMediaSession implements MediaSessionCallback {
         player.pause();
     }
     public void changePlayMode() {
+        if (player.isPersistentQueueMode()) {
+            player.onShuffleClicked();
+            this.mode = 0;
+            return;
+        }
         int correctMode = this.mode; // this.mode change after the following calls
         exoPlayer.setShuffleModeEnabled(false);
         player.setRepeatMode(RepeatMode.OFF);
