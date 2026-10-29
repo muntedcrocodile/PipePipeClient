@@ -514,6 +514,9 @@ public final class Player {
     }
 
     void reloadPlayQueueManager() {
+        if (!persistentQueueController.checkpoint()) {
+            return;
+        }
         if (playQueueManager != null) {
             playQueueManager.dispose();
         }

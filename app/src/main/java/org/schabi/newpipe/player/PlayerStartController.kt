@@ -40,10 +40,10 @@ class PlayerStartController(private val player: Player) {
         var firstEnqueue = building && (player.playQueue == null || player.playQueue!!.isEmpty)
         val oldPlayerType = player.playerType
         if (player.isPersistentQueueMode) {
+            if (!player.persistentQueueController.checkpoint()) return
             val owner = PersistentQueueManager.getInstance(player.context)
             firstEnqueue = building && !QueuePlaybackPolicy.hasUnfinished(
                 owner.queue.isEmpty, owner.queue.isComplete)
-            player.persistentQueueController.checkpoint()
             try {
                 newQueue = when {
                     building -> owner.enqueue(newQueue, enqueueNext)

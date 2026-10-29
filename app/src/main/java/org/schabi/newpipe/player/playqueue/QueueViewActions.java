@@ -8,6 +8,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.FragmentManager;
 import org.schabi.newpipe.database.stream.model.StreamEntity;
 import org.schabi.newpipe.local.dialog.PlaylistCreationDialog;
+import org.schabi.newpipe.player.PersistentQueuePlayerController.CheckpointFailedException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
@@ -70,6 +71,9 @@ public final class QueueViewActions {
             Toast.makeText(context, success, Toast.LENGTH_SHORT).show();
             return true;
         } catch (final RuntimeException error) {
+            if (error instanceof CheckpointFailedException) {
+                return false; // The player's checkpoint already paused and reported the failure.
+            }
             Toast.makeText(context, context.getString(R.string.queue_view_update_failed,
                     error.getMessage()),
                     Toast.LENGTH_LONG).show();
