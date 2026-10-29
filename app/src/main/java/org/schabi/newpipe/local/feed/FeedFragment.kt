@@ -19,6 +19,7 @@
 
 package org.schabi.newpipe.local.feed
 
+import org.schabi.newpipe.info_list.VideoSwipeActions
 import android.annotation.SuppressLint
 import org.schabi.newpipe.plugin.MissingPluginHelper
 import android.app.Activity
@@ -233,6 +234,12 @@ class FeedFragment : BaseStateFragment<FeedState>(), BackPressable {
         })
 
         feedBinding.itemsList.adapter = groupAdapter
+        VideoSwipeActions.attach(this, feedBinding.itemsList) { position ->
+            val item = if (position in 0 until groupAdapter.itemCount) groupAdapter.getItem(position) else null
+            if (item is StreamItem && item.itemVersion == StreamItem.ItemVersion.NORMAL && !isRefreshing && !selection.isActive) {
+                VideoSwipeActions.Row(item.streamWithState.stream.toStreamInfoItem())
+            } else null
+        }
         setupListViewMode()
 
         selection.setListener { controller ->

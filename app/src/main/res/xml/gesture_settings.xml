@@ -120,4 +120,40 @@
         android:entryValues="@array/video_swipe_action_values"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_left_action_playlist_key"
+        android:title="@string/video_swipe_playlist_left_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_playlist_entries"
+        android:entryValues="@array/video_swipe_playlist_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_right_action_playlist_key"
+        android:title="@string/video_swipe_playlist_right_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_playlist_entries"
+        android:entryValues="@array/video_swipe_playlist_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_left_action_history_key"
+        android:title="@string/video_swipe_history_left_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_history_entries"
+        android:entryValues="@array/video_swipe_history_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_right_action_history_key"
+        android:title="@string/video_swipe_history_right_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_history_entries"
+        android:entryValues="@array/video_swipe_history_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
 </PreferenceScreen>
