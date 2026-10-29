@@ -7,7 +7,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.FragmentManager;
 import org.schabi.newpipe.database.stream.model.StreamEntity;
-import org.schabi.newpipe.local.dialog.PlaylistDialog;
+import org.schabi.newpipe.local.dialog.PlaylistCreationDialog;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
@@ -100,8 +100,9 @@ public final class QueueViewActions {
                     if (shuffle) {
                         Toast.makeText(context, R.string.queue_view_updated, Toast.LENGTH_SHORT).show();
                     } else {
-                        PlaylistDialog.createCorrespondingDialog(context, streams,
-                                dialog -> dialog.show(fragments, "save_queue"));
+                        if (!streams.isEmpty()) {
+                            PlaylistCreationDialog.newInstance(streams).show(fragments, "save_queue");
+                        }
                     }
                 }, error -> {
                     if (!cancelled.get()) {
