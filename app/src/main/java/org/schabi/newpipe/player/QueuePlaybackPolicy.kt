@@ -33,6 +33,8 @@ internal class QueuePlaybackPolicy<T>(private val identity: (T) -> String) {
     }
 
     companion object {
+        fun hasUnfinished(empty: Boolean, complete: Boolean): Boolean = !empty || !complete
+
         fun consumeCompletion(currentId: String?, headId: String?, failed: Boolean,
                               blocked: Boolean): Boolean =
             !failed && !blocked && currentId != null && currentId == headId
