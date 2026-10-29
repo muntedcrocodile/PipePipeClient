@@ -47,6 +47,44 @@ public final class VideoSwipeActions {
         }
     }
 
+    public static boolean isEnabled(final Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(context.getString(R.string.video_swipe_enabled_key), false);
+    }
+
+    /** Legacy playlist swipes keep their right-only, non-tab behavior until opt-in. */
+    public static int playlistDirections(final Context context, final Row row, final boolean inTab) {
+        if (isEnabled(context)) {
+            return directions(context, row);
+        }
+        return inTab || "none".equals(playlistAction(context, row, ItemTouchHelper.RIGHT))
+                ? 0 : ItemTouchHelper.RIGHT;
+    }
+
+    static String playlistAction(final Context context, final Row row, final int direction) {
+        if (isEnabled(context)) {
+            return action(context, direction, row);
+        }
+        if (direction != ItemTouchHelper.RIGHT) {
+            return "none";
+        }
+        final String legacy = PreferenceManager.getDefaultSharedPreferences(context)
+                .getString(context.getString(R.string.local_playlist_swipe_action_key), "delete");
+        switch (legacy) {
+            case "delete": return "legacy_delete";
+            case "enqueue": return "enqueue";
+            default: return "none";
+        }
+    }
+
+    public static void executePlaylist(final Fragment fragment, final Row row,
+                                       final int direction, final boolean inTab) {
+        final Context context = fragment.requireContext();
+        if ((playlistDirections(context, row, inTab) & direction) != 0) {
+            executeAction(fragment, row, playlistAction(context, row, direction));
+        }
+    }
+
     public static int directions(final Context context, final Row row) {
         final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         if (!prefs.getBoolean(context.getString(R.string.video_swipe_enabled_key), false)) {
@@ -170,7 +208,24 @@ public final class VideoSwipeActions {
         if ((directions(context, row) & direction) == 0) {
             return;
         }
-        final String action = action(context, direction, row);
+        executeAction(fragment, row, action(context, direction, row));
+    }
+
+    private static void executeAction(final Fragment fragment, final Row row, final String action) {
+        final Context context = fragment.requireContext();
+        if ("legacy_delete".equals(action)) {
+            if (row.removePlaylist == null) {
+                unavailable(context);
+                return;
+            }
+            new AlertDialog.Builder(context)
+                    .setTitle(R.string.play_queue_remove)
+                    .setMessage(R.string.remove_from_playlist_confirmation)
+                    .setPositiveButton(R.string.play_queue_remove,
+                            (dialog, which) -> row.removePlaylist.run())
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
         // Do not prefetch sparse metadata here: submission order must equal gesture order.
         // NavigationHelper and the service own hydration, durability and success feedback.
         if ("enqueue".equals(action)) {
