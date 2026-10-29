@@ -41,7 +41,7 @@ class PlayerStartController(private val player: Player) {
         val oldPlayerType = player.playerType
         if (player.isPersistentQueueMode) {
             val owner = PersistentQueueManager.getInstance(player.context)
-            firstEnqueue = building && owner.queue.isEmpty
+            firstEnqueue = building && owner.queue.isEmpty && owner.queue.isComplete
             player.persistentQueueController.checkpoint()
             try {
                 newQueue = when {
@@ -243,6 +243,7 @@ class PlayerStartController(private val player: Player) {
         player.initPlayer(playOnReady)
 
         player.playQueue = queue
+        player.persistentQueueController.attachQueue()
         queue.init()
         player.reloadPlayQueueManager()
         PlaybackStartupTrace.mark(player.startupTraceId, "media_source_manager_ready")

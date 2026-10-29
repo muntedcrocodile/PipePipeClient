@@ -9,9 +9,6 @@ import android.widget.Toast
 import com.google.android.exoplayer2.Player.DISCONTINUITY_REASON_AUTO_TRANSITION
 import com.google.android.exoplayer2.Player.PositionInfo
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
-import io.reactivex.rxjava3.core.Single
-import io.reactivex.rxjava3.schedulers.Schedulers
 import org.schabi.newpipe.R
 import org.schabi.newpipe.player.mediaitem.PlayerMediaItem
 import org.schabi.newpipe.player.playqueue.PersistentPlayQueue
@@ -31,6 +28,8 @@ class PersistentQueuePlayerController(private val player: Player) {
     private var resumeHeadUuid: String? = null
     private var resumePending = false
     private var resumeGeneration = 0L
+    private var attachedQueue: PersistentPlayQueue? = null
+    private var historyReplayInProgress = false
     private var checkpointInProgress = false
     private var checkpointFailureReported = false
     private val modeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -47,7 +46,7 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     private fun restorePaused() {
         val queue = PersistentQueueManager.getInstance(player.context).queue
-        if (!queue.isEmpty) {
+        if (!queue.isEmpty || !queue.isComplete) {
             player.handleIntent(NavigationHelper.getPlayerIntent(player.context,
                 DeviceUtils.getPlayerServiceClass(), queue, false, false))
         }
@@ -57,6 +56,8 @@ class PersistentQueuePlayerController(private val player: Player) {
         if (closing) return
         // Checkpoint by queue type: the preference already contains its NEW value here.
         checkpoint()
+        attachedQueue?.setBeforeHeadChange(null)
+        attachedQueue = null
         player.destroyPlayer()
         player.playQueue = null
         policy.resetPrevious()
@@ -70,9 +71,21 @@ class PersistentQueuePlayerController(private val player: Player) {
     fun close() {
         closing = true
         checkpoint()
+        attachedQueue?.setBeforeHeadChange(null)
+        attachedQueue = null
         player.prefs.unregisterOnSharedPreferenceChangeListener(modeListener)
         subscriptions.clear()
         main.removeCallbacksAndMessages(null)
+    }
+
+    fun attachQueue() {
+        attachedQueue?.setBeforeHeadChange(null)
+        attachedQueue = player.playQueue as? PersistentPlayQueue
+        attachedQueue?.setBeforeHeadChange {
+            checkpoint()
+            if (!historyReplayInProgress) policy.resetPrevious()
+        }
+        resumeHead()
     }
 
     fun newSelection() { policy.resetPrevious(); policy.clearFailure() }
@@ -193,10 +206,12 @@ class PersistentQueuePlayerController(private val player: Player) {
             player.seekToDefault()
             return
         }
-        replayHistory(item)
+        replayHistory(item, true)
     }
 
-    fun replayHistory(item: PlayerMediaItem) {
+    @JvmOverloads
+    fun replayHistory(item: PlayerMediaItem, fromPrevious: Boolean = false) {
+        if (!fromPrevious) policy.resetPrevious()
         checkpoint()
         val stream = org.schabi.newpipe.extractor.stream.StreamInfoItem(
             item.serviceId, item.url, item.title, item.streamType)
@@ -208,7 +223,12 @@ class PersistentQueuePlayerController(private val player: Player) {
             DeviceUtils.getPlayerServiceClass(), SinglePlayQueue(stream), true)
         intent.putExtra(HISTORY_REPLAY, true)
         intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, player.playerType.ordinal)
-        player.handleIntent(intent)
+        historyReplayInProgress = fromPrevious
+        try {
+            player.handleIntent(intent)
+        } finally {
+            historyReplayInProgress = false
+        }
     }
 
     /** Return true when Play is waiting for a failed/pending page to be explicitly retried. */
@@ -230,11 +250,15 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     fun shuffleUpcoming() {
         val queue = player.playQueue as? PersistentPlayQueue ?: return
-        subscriptions.add(Single.fromCallable {
-            queue.shuffleUpcoming { closing }
-            true
-        }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
-            .subscribe({ player.notifyQueueUpdateToListeners() }, { failure(it) }))
+        val activity = player.parentActivity
+        if (activity != null) {
+            subscriptions.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                activity, activity.supportFragmentManager, queue, true))
+        } else {
+            player.context.startActivity(android.content.Intent(player.context,
+                PlayQueueActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("persistent_queue_shuffle_requested", true))
+        }
     }
 
     fun failure(error: Throwable) {
