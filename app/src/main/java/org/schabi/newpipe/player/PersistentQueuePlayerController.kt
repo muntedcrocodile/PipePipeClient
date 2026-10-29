@@ -89,7 +89,7 @@ class PersistentQueuePlayerController(private val player: Player) {
         resumeHead()
     }
 
-    fun newSelection() { policy.resetPrevious(); policy.clearFailure() }
+    fun newSelection() { policy.resetPrevious() }
 
     fun playbackFailed() { policy.playbackFailed() }
 
@@ -131,7 +131,7 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     fun tick() {
         val queue = player.playQueue as? PersistentPlayQueue ?: return
-        if (queue.pendingError != null) {
+        if (queue.hasBlockedBoundary() && queue.pendingError != null) {
             player.onBufferingFailed()
             return
         }
@@ -235,13 +235,12 @@ class PersistentQueuePlayerController(private val player: Player) {
     /** Return true when Play is waiting for a failed/pending page to be explicitly retried. */
     fun retryPending(): Boolean {
         val queue = player.playQueue as? PersistentPlayQueue ?: return false
-        if (queue.pendingError != null || queue.hasBlockedBoundary()) {
+        if (queue.hasBlockedBoundary()) {
             player.simpleExoPlayer.playWhenReady = true
             queue.retryPending()
             return true
         }
-        if (policy.failed) {
-            policy.clearFailure()
+        if (policy.retryFailedHead()) {
             player.simpleExoPlayer.playWhenReady = true
             player.reloadPlayQueueManager()
             return true

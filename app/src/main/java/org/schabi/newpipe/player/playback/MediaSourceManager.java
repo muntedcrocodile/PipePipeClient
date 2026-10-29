@@ -241,7 +241,7 @@ public class MediaSourceManager {
             playbackListener.onPlaybackShutdown();
             return;
         }
-        if (queue.hasBlockedBoundary() || queue.getPendingError() != null) {
+        if (queue.hasBlockedBoundary()) {
             persistentHead = null;
             maybeBlock();
             if (queue.getPendingError() != null) {
@@ -335,8 +335,7 @@ public class MediaSourceManager {
     private boolean isPlayQueueReady() {
         if (playQueue instanceof PersistentPlayQueue) {
             final PersistentPlayQueue queue = (PersistentPlayQueue) playQueue;
-            return !queue.hasBlockedBoundary() && queue.getPendingError() == null
-                    && !queue.isEmpty();
+            return !queue.hasBlockedBoundary() && !queue.isEmpty();
         }
         final boolean isWindowLoaded = playQueue.size() - playQueue.getIndex() > WINDOW_SIZE;
         return playQueue.isComplete() || isWindowLoaded;
@@ -520,8 +519,7 @@ public class MediaSourceManager {
         loadingItems.remove(item.getUuid());
         if (playQueue instanceof PersistentPlayQueue) {
             final PersistentPlayQueue queue = (PersistentPlayQueue) playQueue;
-            if (queue.hasBlockedBoundary() || queue.getPendingError() != null
-                    || !item.equals(queue.getItem())) return;
+            if (queue.hasBlockedBoundary() || !item.equals(queue.getItem())) return;
             if (mediaSource instanceof FailedMediaSource) {
                 // FailedMediaSource normally plays silence and completes. That would consume an
                 // unfinished entry, so never attach it in Queue mode.

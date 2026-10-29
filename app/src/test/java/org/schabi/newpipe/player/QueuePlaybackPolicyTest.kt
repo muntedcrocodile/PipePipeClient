@@ -4,6 +4,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class QueuePlaybackPolicyTest {
+    @Test fun persistentHeadKeepsBothTransportButtonsIncludingFinalOccurrence() {
+        assertTrue(QueuePlaybackPolicy.showPrevious(true, 0, 1))
+        assertTrue(QueuePlaybackPolicy.showNext(true, 0, 1))
+        assertFalse(QueuePlaybackPolicy.showPrevious(true, 0, 0))
+        assertFalse(QueuePlaybackPolicy.showNext(true, 0, 0))
+        assertFalse(QueuePlaybackPolicy.showPrevious(false, 0, 2))
+        assertTrue(QueuePlaybackPolicy.showNext(false, 0, 2))
+        assertTrue(QueuePlaybackPolicy.showPrevious(false, 1, 2))
+        assertFalse(QueuePlaybackPolicy.showNext(false, 1, 2))
+        val policy = QueuePlaybackPolicy<String> { it }
+        assertNull(policy.previous("current", emptyList())) // Recording off or depth zero: restart.
+        assertTrue(QueuePlaybackPolicy.showPrevious(true, 0, 1))
+    }
+
+    @Test fun tappingFailedCurrentOccurrenceRetainsExplicitRetryAndRebuildDecision() {
+        val policy = QueuePlaybackPolicy<String> { it }
+        policy.headChanged("failed-current")
+        policy.playbackFailed()
+        policy.resetPrevious() // Same occurrence selection must not clear failure.
+        policy.headChanged("failed-current")
+        assertTrue(policy.retryFailedHead()) // The bridge rebuilds the source on this decision.
+        assertFalse(policy.retryFailedHead()) // Repeated Play does not start a second rebuild.
+        assertTrue(QueuePlaybackPolicy.consumeCompletion("failed-current", "failed-current",
+            policy.failed, false))
+    }
+
     @Test fun previousKeepsStableOrderAcrossReplayRecencyChanges() {
         val policy = QueuePlaybackPolicy<String> { it }
         assertEquals("B", policy.previous("C", listOf("C", "B", "A")))
