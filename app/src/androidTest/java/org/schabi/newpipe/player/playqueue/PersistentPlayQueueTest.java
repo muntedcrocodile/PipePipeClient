@@ -532,4 +532,292 @@ public class PersistentPlayQueueTest {
         assertEquals(8765, queue.getRecoveryPosition(2));
     }
 
+    @Test
+    public void prependedRemoteLoadsAllOwnPagesBeforeRetainedOlderBoundaryFailure() throws Exception {
+        queue.append(item("old"));
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorA = new java.io.IOException("A offline");
+        pages.take().emitter.onError(errorA);
+        awaitState(() -> queue.getPendingError() == errorA);
+
+        queue.insert(remote("source-B", "B"), true, false);
+        assertNull(queue.getPendingError());
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        queue.fetch();
+        final Request firstB = pages.take();
+        assertEquals("source-B", firstB.boundary.url);
+        firstB.succeed("B2", new org.schabi.newpipe.extractor.Page("B-next"));
+        awaitState(() -> !queue.hasBlockedBoundary());
+        assertNull(queue.getPendingError());
+        queue.consume();
+        queue.fetch();
+        final Request secondB = pages.take();
+        assertEquals("B-next", secondB.boundary.page.getUrl());
+        secondB.succeed("B3", null);
+        awaitState(() -> !queue.hasBlockedBoundary());
+        assertEquals("B3", queue.getItem().getUrl());
+        assertSame(errorA, queue.getPendingError());
+        assertFalse(queue.hasBlockedBoundary()); // Loaded B3 remains playable ahead of A's failure.
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        final int before = pages.calls.get();
+        queue.fetch();
+        assertEquals(before, pages.calls.get());
+        queue.retryPending();
+        final Request retryA = pages.take();
+        assertEquals("source-A", retryA.boundary.url);
+        retryA.succeed("A2", null);
+        awaitState(() -> queue.isComplete());
+        assertNull(queue.getPendingError());
+        assertEquals(Arrays.asList("A2", "old"), urls(queue.getStreams()));
+        helper.close();
+        open();
+        assertEquals(Arrays.asList("A2", "old"), urls(queue.getStreams()));
+    }
+
+    @Test
+    public void failedBRetryDoesNotClearFailedAWithIdenticalSourceUrl() throws Exception {
+        queue.insert(remote("same-source", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorA = new java.io.IOException("A failure");
+        pages.take().emitter.onError(errorA);
+        awaitState(() -> queue.getPendingError() == errorA);
+        queue.insert(remote("same-source", "B"), true, false);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorB = new java.io.IOException("B failure");
+        pages.take().emitter.onError(errorB);
+        awaitState(() -> queue.getPendingError() == errorB);
+        queue.retryPending();
+        pages.take().succeed("B2", null);
+        awaitState(() -> !queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        final int before = pages.calls.get();
+        queue.fetch();
+        assertEquals(before, pages.calls.get());
+        queue.retryPending();
+        pages.take().succeed("A2", null);
+        awaitState(() -> queue.isComplete());
+        assertEquals(Collections.singletonList("A2"), urls(queue.getStreams()));
+    }
+
+    @Test
+    public void olderInFlightFailureAfterPrependCannotPoisonNewSourceOrOverwriteEdits() throws Exception {
+        queue.append(item("old"));
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.fetch();
+        final Request pendingA = pages.take();
+        queue.insert(remote("source-B", "B"), true, false);
+        queue.setRecovery(0, 456);
+        queue.append(item("concurrent"));
+        final java.io.IOException errorA = new java.io.IOException("late A failure");
+        pendingA.emitter.onError(errorA);
+        assertNull(queue.getPendingError());
+        queue.consume();
+        queue.fetch();
+        final Request pendingB = pages.take();
+        assertEquals("source-B", pendingB.boundary.url);
+        pendingB.succeed("B2", null);
+        awaitState(() -> queue.size() == 4);
+        assertEquals(Arrays.asList("B2", "A", "old", "concurrent"), urls(queue.getStreams()));
+        queue.consume();
+        assertEquals("A", queue.getItem().getUrl());
+        assertFalse(queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        // Transient errors may be retried after paused restart, but both boundaries/order persist.
+        helper.close();
+        open();
+        usePages(pages);
+        assertTrue(queue.hasBlockedBoundary());
+        assertNull(queue.getPendingError());
+        queue.fetch();
+        final Request restoredA = pages.take();
+        assertEquals("source-A", restoredA.boundary.url);
+        restoredA.succeed("A2", null);
+        awaitState(() -> queue.isComplete());
+        assertEquals(Arrays.asList("A2", "old", "concurrent"), urls(queue.getStreams()));
+    }
+
+    @Test
+    public void reverseCopyAndLiveResponsesKeepFailureOnLiveBoundaryOnly() throws Exception {
+        queue.append(item("old"));
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.fetch();
+        final Request liveA = pages.take(); // Oldest request will complete after newer B's copy.
+        queue.insert(remote("source-B", "B"), true, false);
+        final java.util.List<PlayerMediaItem> before = queue.getStreams();
+        final java.util.concurrent.ExecutorService worker =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            final java.util.concurrent.Future<java.util.List<PlayerMediaItem>> copy =
+                    worker.submit(() -> queue.materialize(() -> false));
+            final Request copyB = pages.take();
+            assertEquals("source-B", copyB.boundary.url);
+            copyB.succeed("B-copy", null);
+            final Request copyA = pages.take();
+            assertEquals("source-A", copyA.boundary.url);
+            final java.io.IOException errorA = new java.io.IOException("late live failure");
+            liveA.emitter.onError(errorA);
+            copyA.succeed("A-copy", null);
+            assertEquals(Arrays.asList("B", "B-copy", "A", "A-copy", "old"),
+                    urls(copy.get(5, java.util.concurrent.TimeUnit.SECONDS)));
+            assertEquals(before, queue.getStreams());
+            assertNull(queue.getPendingError()); // B's pending boundary, not failed A, is first.
+            queue.consume();
+            queue.fetch();
+            pages.take().succeed("B-live", null);
+            awaitState(() -> !queue.hasBlockedBoundary());
+            assertSame(errorA, queue.getPendingError()); // Copy success never acknowledges live A.
+            assertEquals(Arrays.asList("B-live", "A", "old"), urls(queue.getStreams()));
+        } finally {
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    public void cancelledShufflePreservesMultipleErrorsAndClearReleasesAllOfThem() throws Exception {
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorA = new java.io.IOException("A failed");
+        pages.take().emitter.onError(errorA);
+        queue.insert(remote("source-B", "B"), true, false);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorB = new java.io.IOException("B failed");
+        pages.take().emitter.onError(errorB);
+        assertSame(errorB, queue.getPendingError());
+        final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.ExecutorService worker =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            final java.util.concurrent.Future<?> shuffle = worker.submit(() ->
+                    queue.shuffleUpcoming(cancel::get));
+            final Request retryB = pages.take();
+            retryB.succeed("B-copy", null);
+            final Request retryA = pages.take();
+            cancel.set(true);
+            try {
+                shuffle.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                fail("Cancellation expected");
+            } catch (final java.util.concurrent.ExecutionException expected) {
+                assertTrue(expected.getCause() instanceof CancellationException);
+            }
+            assertTrue(retryA.emitter.isDisposed());
+            assertSame(errorB, queue.getPendingError());
+            assertTrue(queue.hasBlockedBoundary());
+            queue.retryPending();
+            pages.take().succeed("B-live", null);
+            awaitState(() -> !queue.hasBlockedBoundary());
+            assertSame(errorA, queue.getPendingError());
+            queue.clear();
+            assertNull(queue.getPendingError());
+            assertTrue(queue.isComplete());
+            assertTrue(queue.isEmpty());
+            queue.insert(remote("source-A", "fresh-A"), true, false);
+            queue.fetch();
+            pages.take().succeed("fresh-A2", null);
+            awaitState(() -> queue.isComplete());
+            assertEquals(Arrays.asList("fresh-A", "fresh-A2"), urls(queue.getStreams()));
+        } finally {
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    public void selectingAndCheckpointingPastFailedBoundaryRetainsItForLaterRetry() throws Exception {
+        queue.append(item("selected-old"));
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.consume();
+        queue.fetch();
+        final java.io.IOException errorA = new java.io.IOException("A failed");
+        pages.take().emitter.onError(errorA);
+        awaitState(() -> queue.getPendingError() == errorA);
+        assertTrue(queue.hasBlockedBoundary());
+        final String selectedUuid = queue.getItem(0).getUuid();
+        queue.setIndex(0);
+        queue.setRecovery(0, 1234);
+        assertEquals(selectedUuid, queue.getItem().getUuid());
+        assertFalse(queue.hasBlockedBoundary());
+        assertSame(errorA, queue.getPendingError());
+        queue.consume();
+        assertTrue(queue.hasBlockedBoundary());
+        assertTrue(queue.isEmpty());
+        assertFalse(queue.isComplete());
+        assertSame(errorA, queue.getPendingError());
+        final int before = pages.calls.get();
+        queue.fetch();
+        assertEquals(before, pages.calls.get());
+        queue.retryPending();
+        pages.take().succeed("A2", null);
+        awaitState(() -> queue.isComplete());
+        assertEquals(Collections.singletonList("A2"), urls(queue.getStreams()));
+    }
+
+    @Test
+    public void successfulShuffleCommitsMaterializedBoundariesAndReleasesOnlyResolvedErrors()
+            throws Exception {
+        queue.append(item("old"));
+        queue.insert(remote("source-A", "A"), true, false);
+        final Pages pages = new Pages();
+        usePages(pages);
+        queue.fetch();
+        final java.io.IOException errorA = new java.io.IOException("A failed");
+        pages.take().emitter.onError(errorA);
+        queue.insert(remote("source-B", "B"), true, false);
+        queue.fetch();
+        final java.io.IOException errorB = new java.io.IOException("B failed");
+        pages.take().emitter.onError(errorB);
+        final String head = queue.getItem().getUuid();
+        assertSame(errorB, queue.getPendingError());
+        final java.util.concurrent.ExecutorService worker =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            final java.util.concurrent.Future<?> shuffled = worker.submit(() ->
+                    queue.shuffleUpcoming(() -> false));
+            final Request retryB = pages.take();
+            assertEquals("source-B", retryB.boundary.url);
+            retryB.succeed("B2", null);
+            final Request retryA = pages.take();
+            assertEquals("source-A", retryA.boundary.url);
+            retryA.succeed("A2", null);
+            shuffled.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(queue.isComplete());
+            assertNull(queue.getPendingError());
+            assertEquals(head, queue.getItem().getUuid());
+            assertEquals(5, queue.size());
+            helper.close();
+            open();
+            assertTrue(queue.isComplete());
+            assertNull(queue.getPendingError());
+            assertEquals(head, queue.getItem().getUuid());
+            assertEquals(5, queue.size());
+        } finally {
+            worker.shutdownNow();
+        }
+    }
+
 }

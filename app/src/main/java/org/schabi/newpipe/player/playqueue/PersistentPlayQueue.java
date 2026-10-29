@@ -107,7 +107,9 @@ public final class PersistentPlayQueue extends PlayQueue {
     private transient boolean fetching;
     private transient io.reactivex.rxjava3.disposables.Disposable fetchTask;
     private transient long fetchGeneration;
-    private transient Throwable pendingError;
+    // State copies retain immutable Node identities. A failure belongs to that exact
+    // continuation, never to the queue or to a source URL shared by another batch.
+    private final transient Map<Node, Throwable> pendingErrors = new java.util.IdentityHashMap<>();
     private long structuralRevision;
 
     PersistentPlayQueue(final PersistentQueueStore store) {
@@ -156,6 +158,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         }
         store.save(candidate);
         state = candidate;
+        pendingErrors.keySet().removeIf(boundary -> !state.nodes.contains(boundary));
         if (structural) {
             structuralRevision++;
         }
@@ -165,6 +168,7 @@ public final class PersistentPlayQueue extends PlayQueue {
         frozen = true;
         beforeHeadChange = null;
         cancelFetch();
+        pendingErrors.clear();
     }
 
     private void cancelFetch() {
@@ -238,9 +242,13 @@ public final class PersistentPlayQueue extends PlayQueue {
         return state.nodes.stream().noneMatch(node -> node.item == null);
     }
 
+    /**
+     * Failure of the first pending boundary, if any. Playback waits on it only when
+     * hasBlockedBoundary() is true; loaded entries ahead of it remain playable.
+     */
     @Nullable
     public synchronized Throwable getPendingError() {
-        return pendingError;
+        return pendingErrors.get(firstPending(state));
     }
 
     @Override
@@ -396,7 +404,7 @@ public final class PersistentPlayQueue extends PlayQueue {
     synchronized void clear() {
         commit(new State());
         cancelFetch();
-        pendingError = null;
+        pendingErrors.clear();
         broadcast(new InitEvent());
     }
 
@@ -492,18 +500,20 @@ public final class PersistentPlayQueue extends PlayQueue {
 
     /** Explicit user retry; implicit loader fetches never bypass a retained failure. */
     public synchronized void retryPending() {
-        pendingError = null;
+        if (frozen) {
+            return;
+        }
+        pendingErrors.remove(firstPending(state));
         fetch();
     }
 
     @Override
     public synchronized void fetch() {
         final Node boundary = firstPending(state);
-        if (frozen || fetching || pendingError != null || boundary == null) {
+        if (frozen || fetching || boundary == null || pendingErrors.containsKey(boundary)) {
             return;
         }
         fetching = true;
-        pendingError = null;
         final State snapshot = state.copy();
         final long generation = ++fetchGeneration;
         fetchTask = Single.defer(() -> pageResolver.resolve(snapshot, boundary))
@@ -525,9 +535,8 @@ public final class PersistentPlayQueue extends PlayQueue {
                 merged.nodes.addAll(at, result.nodes.subList(start, start + count));
                 try {
                     commit(merged);
-                    pendingError = null;
                 } catch (final RuntimeException failure) {
-                    pendingError = failure;
+                    pendingErrors.put(boundary, failure);
                 }
                 broadcast(new InitEvent());
             }
@@ -537,8 +546,8 @@ public final class PersistentPlayQueue extends PlayQueue {
                     return;
                 }
                 fetching = false;
-                if (!frozen) {
-                    pendingError = failure;
+                if (!frozen && state.nodes.contains(boundary)) {
+                    pendingErrors.put(boundary, failure);
                     broadcast(new InitEvent());
                 }
             }
