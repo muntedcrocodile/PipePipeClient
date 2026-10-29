@@ -8,6 +8,10 @@ import android.database.Cursor;
 
 import androidx.annotation.NonNull;
 import androidx.room.Room;
+import androidx.room.RoomDatabase;
+import androidx.sqlite.db.SupportSQLiteDatabase;
+
+import org.schabi.newpipe.player.playqueue.PersistentQueueStore;
 
 import org.schabi.newpipe.database.AppDatabase;
 
@@ -23,6 +27,14 @@ public final class NewPipeDatabase {
                 .databaseBuilder(context.getApplicationContext(), AppDatabase.class, DATABASE_NAME)
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_7_6, MIGRATION_8_6, MIGRATION_9_6, MIGRATION_6_900, MIGRATION_9_900, MIGRATION_900_901)
+                .addCallback(new RoomDatabase.Callback() {
+                    @Override
+                    public void onOpen(@NonNull final SupportSQLiteDatabase db) {
+                        // Outside a transaction: acknowledged queue edits require durable WAL.
+                        db.execSQL("PRAGMA synchronous=FULL");
+                        PersistentQueueStore.createTable(db);
+                    }
+                })
                 .build();
     }
 

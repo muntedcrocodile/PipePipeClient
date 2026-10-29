@@ -94,6 +94,7 @@ public abstract class PlayQueue implements Serializable {
      * </p>
      */
     public void init() {
+        disposed = false;
         eventBroadcast = BehaviorSubject.create();
 
         broadcastReceiver = eventBroadcast.toFlowable(BackpressureStrategy.BUFFER)
@@ -634,7 +635,7 @@ public abstract class PlayQueue implements Serializable {
     // Rx Broadcast
     //////////////////////////////////////////////////////////////////////////*/
 
-    private void broadcast(@NonNull final PlayQueueEvent event) {
+    protected final void broadcast(@NonNull final PlayQueueEvent event) {
         if (eventBroadcast != null) {
             eventBroadcast.onNext(event);
         }
