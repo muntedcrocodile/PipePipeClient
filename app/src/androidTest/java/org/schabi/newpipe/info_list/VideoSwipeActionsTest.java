@@ -28,7 +28,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Integration tests for opt-in safety and displayed-row identity without network/player startup. */
+/** Tests default-enabled controls, opt-outs and displayed-row identity without player startup. */
 @RunWith(AndroidJUnit4.class)
 public class VideoSwipeActionsTest {
     private Context context;
@@ -72,9 +72,18 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
-    public void newControlsStayOffUntilOptInAndNoneHasNoFallback() {
+    public void newControlsDefaultOnAndExplicitOptOutAndNoneHaveNoFallback() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
-        prefs.edit().putString("local_playlist_swipe_action", "delete").commit();
+        prefs.edit().putString("local_playlist_swipe_action", "disable").commit();
+        assertEquals("enqueue_next", VideoSwipeActions.playlistAction(
+                context, playlist, ItemTouchHelper.LEFT));
+        assertEquals("enqueue", VideoSwipeActions.playlistAction(
+                context, playlist, ItemTouchHelper.RIGHT));
+        assertEquals(ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT,
+                VideoSwipeActions.playlistDirections(context, playlist, true));
+        assertEquals(ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT,
+                VideoSwipeActions.directions(context, playlist));
+        prefs.edit().putBoolean("video_swipe_enabled", false).commit();
         assertEquals(0, VideoSwipeActions.directions(context, playlist));
         prefs.edit().putBoolean("video_swipe_enabled", true).commit();
         assertEquals(ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT,
@@ -111,9 +120,10 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
-    public void legacyPlaylistActionsApplyOnlyBeforeOptIn() {
+    public void legacyPlaylistActionsApplyOnlyAfterExplicitOptOut() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
-        // Existing users retain the old default and their explicit action, always physical right.
+        prefs.edit().putBoolean("video_swipe_enabled", false).commit();
+        // Explicit opt-outs retain legacy playlist behavior, always physical right.
         assertEquals("legacy_delete", VideoSwipeActions.playlistAction(context, playlist, ItemTouchHelper.RIGHT));
         for (final String legacy : Arrays.asList("delete", "enqueue", "disable")) {
             prefs.edit().putString("local_playlist_swipe_action", legacy).commit();

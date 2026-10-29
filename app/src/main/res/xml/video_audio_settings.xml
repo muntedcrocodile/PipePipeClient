@@ -7,7 +7,7 @@
         android:key="@string/persistent_queue_enabled_key"
         android:title="@string/persistent_queue_title"
         android:summary="@string/persistent_queue_summary"
-        android:defaultValue="false"
+        android:defaultValue="true"
         app:iconSpaceReserved="false" />
     <SwitchPreferenceCompat
         android:key="@string/persistent_queue_visible_key"

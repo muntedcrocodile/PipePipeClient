@@ -49,10 +49,10 @@ public final class VideoSwipeActions {
 
     public static boolean isEnabled(final Context context) {
         return PreferenceManager.getDefaultSharedPreferences(context)
-                .getBoolean(context.getString(R.string.video_swipe_enabled_key), false);
+                .getBoolean(context.getString(R.string.video_swipe_enabled_key), true);
     }
 
-    /** Legacy playlist swipes keep their right-only, non-tab behavior until opt-in. */
+    /** Legacy playlist swipes keep their right-only, non-tab behavior after an explicit opt-out. */
     public static int playlistDirections(final Context context, final Row row, final boolean inTab) {
         if (isEnabled(context)) {
             return directions(context, row);
@@ -86,8 +86,7 @@ public final class VideoSwipeActions {
     }
 
     public static int directions(final Context context, final Row row) {
-        final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        if (!prefs.getBoolean(context.getString(R.string.video_swipe_enabled_key), false)) {
+        if (!isEnabled(context)) {
             return 0;
         }
         int flags = 0;
