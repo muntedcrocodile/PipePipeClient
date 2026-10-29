@@ -170,6 +170,25 @@ public final class PlayQueueActivity extends AppCompatActivity
     }
 
     @Override
+    protected void onNewIntent(final Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        consumeShuffleRequest();
+    }
+
+    private void consumeShuffleRequest() {
+        if (player == null || !(player.getPlayQueue() instanceof
+                org.schabi.newpipe.player.playqueue.PersistentPlayQueue)
+                || !getIntent().getBooleanExtra("persistent_queue_shuffle_requested", false)) {
+            return;
+        }
+        getIntent().removeExtra("persistent_queue_shuffle_requested");
+        queueOperations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                this, getSupportFragmentManager(),
+                (org.schabi.newpipe.player.playqueue.PersistentPlayQueue) player.getPlayQueue(), true));
+    }
+
+    @Override
     protected void onDestroy() {
         queueOperations.clear();
         super.onDestroy();
@@ -236,6 +255,7 @@ public final class PlayQueueActivity extends AppCompatActivity
                     finish();
                 } else {
                     buildComponents();
+                    consumeShuffleRequest();
                     if (player != null) {
                         player.setActivityListener(PlayQueueActivity.this);
                     }

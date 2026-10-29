@@ -49,6 +49,7 @@ public final class PersistentQueueFragment extends BaseFragment {
         }
     };
     private PersistentPlayQueue queue;
+    private QueuePendingView pendingView;
     private PlayQueueAdapter adapter;
     private ItemTouchHelper touch;
     private final CompositeDisposable operations = new CompositeDisposable();
@@ -117,7 +118,9 @@ public final class PersistentQueueFragment extends BaseFragment {
         root.addView(list, new android.widget.FrameLayout.LayoutParams(-1, -1));
         final View empty = inflater.inflate(R.layout.fragment_empty, root, false);
         root.addView(empty);
-        final Runnable updateEmpty = () -> empty.setVisibility(queue.isEmpty()
+        pendingView = new QueuePendingView(requireContext(), queue);
+        root.addView(pendingView, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        final Runnable updateEmpty = () -> empty.setVisibility(queue.isEmpty() && queue.isComplete()
                 ? View.VISIBLE : View.GONE);
         adapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
             @Override
@@ -187,6 +190,8 @@ public final class PersistentQueueFragment extends BaseFragment {
     @Override
     public void onDestroyView() {
         operations.clear();
+        pendingView.dispose();
+        pendingView = null;
         if (bound) {
             requireContext().unbindService(connection);
             bound = false;
