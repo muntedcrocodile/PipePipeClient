@@ -21,6 +21,9 @@ import org.schabi.newpipe.info_list.dialog.StreamDialogDefaultEntry;
 import org.schabi.newpipe.player.playqueue.SinglePlayQueue;
 import org.schabi.newpipe.util.NavigationHelper;
 
+import java.util.IdentityHashMap;
+import java.util.Map;
+
 /** Source-row actions only. Player queue occurrences have their own removal gestures. */
 public final class VideoSwipeActions {
     private VideoSwipeActions() { }
@@ -115,17 +118,34 @@ public final class VideoSwipeActions {
     public static void attach(final Fragment fragment, final RecyclerView list,
                               final RowResolver resolver) {
         protectTabGesture(fragment, list, resolver);
-        new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(0,
+        new ItemTouchHelper(createCallback(fragment, list, resolver)).attachToRecyclerView(list);
+    }
+
+    static ItemTouchHelper.SimpleCallback createCallback(final Fragment fragment,
+                                                         final RecyclerView list,
+                                                         final RowResolver resolver) {
+        return new ItemTouchHelper.SimpleCallback(0,
                 ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT) {
-            private Row swipingRow;
+            // Several holders can be recovering before ItemTouchHelper dispatches onSwiped.
+            private final Map<RecyclerView.ViewHolder, Row> swipingRows = new IdentityHashMap<>();
 
             @Override
             public void onSelectedChanged(@Nullable final RecyclerView.ViewHolder holder,
                                           final int state) {
                 if (holder != null && state == ItemTouchHelper.ACTION_STATE_SWIPE) {
-                    swipingRow = resolver.resolve(holder.getBindingAdapterPosition());
+                    swipingRows.put(holder, resolver.resolve(holder.getBindingAdapterPosition()));
+                } else if (holder != null) {
+                    swipingRows.remove(holder);
                 }
                 super.onSelectedChanged(holder, state);
+            }
+
+            @Override
+            public void clearView(@NonNull final RecyclerView recyclerView,
+                                  @NonNull final RecyclerView.ViewHolder holder) {
+                // Cancellation, recovery override and recycling invalidate only this gesture.
+                swipingRows.remove(holder);
+                super.clearView(recyclerView, holder);
             }
 
             @Override
@@ -147,8 +167,8 @@ public final class VideoSwipeActions {
             public void onSwiped(@NonNull final RecyclerView.ViewHolder holder,
                                  final int direction) {
                 final int position = holder.getBindingAdapterPosition();
-                final Row row = swipingRow != null ? swipingRow : resolver.resolve(position);
-                swipingRow = null;
+                // Never resolve again: this holder may now display a different source row.
+                final Row row = swipingRows.remove(holder);
                 // Restore before launching dialogs/actions: cancellation never removes a source row.
                 if (position != RecyclerView.NO_POSITION && list.getAdapter() != null) {
                     list.getAdapter().notifyItemChanged(position);
@@ -157,7 +177,7 @@ public final class VideoSwipeActions {
                     execute(fragment, row, direction);
                 }
             }
-        }).attachToRecyclerView(list);
+        };
     }
 
     /** Keep horizontal row gestures available inside ViewPager tabs, preserving vertical scroll. */
