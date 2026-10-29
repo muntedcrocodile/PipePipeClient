@@ -283,7 +283,8 @@ class PlayerTransportController(private val player: Player) {
                 )
             }
 
-            if (playQueue.getRecoveryPosition(item) != PlayQueue.RECOVERY_UNSET
+            if (!StreamTypeUtil.isLiveStream(item.streamType)
+                && playQueue.getRecoveryPosition(item) != PlayQueue.RECOVERY_UNSET
                 && player.shouldSeek()
             ) {
                 player.simpleExoPlayer.seekTo(
