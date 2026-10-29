@@ -54,6 +54,7 @@ import org.schabi.newpipe.info_list.dialog.StreamDialogDefaultEntry;
 import org.schabi.newpipe.local.BaseLocalListFragment;
 import org.schabi.newpipe.local.dialog.PlaylistDialog;
 import org.schabi.newpipe.local.history.HistoryRecordManager;
+import org.schabi.newpipe.player.PlayerService.PlayerType;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
 import org.schabi.newpipe.player.playqueue.SinglePlayQueue;
 import org.schabi.newpipe.util.*;
@@ -448,6 +449,9 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
 
     @Override
     public void onDestroyView() {
+        if (itemTouchHelper != null) {
+            itemTouchHelper.attachToRecyclerView(null);
+        }
         super.onDestroyView();
 
         if(Objects.requireNonNull(activity.getSupportActionBar()).getCustomView() != null){
@@ -990,6 +994,16 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
 
         });
 
+        playlistControlBinding.playlistCtrlPlayPopupButton.setOnLongClickListener(view -> {
+            NavigationHelper.enqueueOnPlayer(activity, getPlayQueue(), PlayerType.POPUP);
+            return true;
+        });
+
+        playlistControlBinding.playlistCtrlPlayBgButton.setOnLongClickListener(view -> {
+            NavigationHelper.enqueueOnPlayer(activity, getPlayQueue(), PlayerType.AUDIO);
+            return true;
+        });
+
         hideLoading();
     }
 
@@ -1206,16 +1220,29 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
             swipeDirections = ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT;
         }
         return new ItemDragTouchHelperCallback(directions, swipeDirections) {
-            private PlaylistStreamEntry swipingItem;
+            // onSwiped is deferred until recovery animations finish, possibly for other rows.
+            private final Map<RecyclerView.ViewHolder, PlaylistStreamEntry> swipingItems =
+                    new IdentityHashMap<>();
 
             @Override
             public void onSelectedChanged(@Nullable final RecyclerView.ViewHolder holder,
                                           final int state) {
                 if (holder != null && state == ItemTouchHelper.ACTION_STATE_SWIPE) {
-                    final LocalItem item = itemListAdapter.getSwipeItem(holder.getBindingAdapterPosition());
-                    swipingItem = item instanceof PlaylistStreamEntry ? (PlaylistStreamEntry) item : null;
+                    final LocalItem item = itemListAdapter == null ? null
+                            : itemListAdapter.getSwipeItem(holder.getBindingAdapterPosition());
+                    swipingItems.put(holder,
+                            item instanceof PlaylistStreamEntry ? (PlaylistStreamEntry) item : null);
+                } else if (holder != null) {
+                    swipingItems.remove(holder);
                 }
                 super.onSelectedChanged(holder, state);
+            }
+
+            @Override
+            public void clearView(@NonNull final RecyclerView recyclerView,
+                                  @NonNull final RecyclerView.ViewHolder holder) {
+                swipingItems.remove(holder);
+                super.clearView(recyclerView, holder);
             }
 
             @Override
@@ -1270,13 +1297,12 @@ public class LocalPlaylistFragment extends BaseLocalListFragment<List<PlaylistSt
             public void onSwiped(@NonNull final RecyclerView.ViewHolder viewHolder,
                                  final int swipeDir) {
                 final int position = viewHolder.getBindingAdapterPosition();
-                final LocalItem item = swipingItem != null ? swipingItem : itemListAdapter.getSwipeItem(position);
-                swipingItem = null;
-                if (position != RecyclerView.NO_POSITION) {
+                // Keep the selected occurrence even if filtering or rebinding moved the holder.
+                final PlaylistStreamEntry entry = swipingItems.remove(viewHolder);
+                if (position != RecyclerView.NO_POSITION && itemListAdapter != null) {
                     itemListAdapter.notifyItemChanged(position);
                 }
-                if (item instanceof PlaylistStreamEntry) {
-                    final PlaylistStreamEntry entry = (PlaylistStreamEntry) item;
+                if (entry != null && getContext() != null) {
                     VideoSwipeActions.executePlaylist(
                             LocalPlaylistFragment.this,
                             new VideoSwipeActions.Row(
