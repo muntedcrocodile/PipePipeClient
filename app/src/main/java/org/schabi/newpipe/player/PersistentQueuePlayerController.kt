@@ -46,7 +46,7 @@ class PersistentQueuePlayerController(private val player: Player) {
 
     private fun restorePaused() {
         val queue = PersistentQueueManager.getInstance(player.context).queue
-        if (!queue.isEmpty || !queue.isComplete) {
+        if (QueuePlaybackPolicy.hasUnfinished(queue.isEmpty, queue.isComplete)) {
             player.handleIntent(NavigationHelper.getPlayerIntent(player.context,
                 DeviceUtils.getPlayerServiceClass(), queue, false, false))
         }
@@ -59,6 +59,7 @@ class PersistentQueuePlayerController(private val player: Player) {
         attachedQueue?.setBeforeHeadChange(null)
         attachedQueue = null
         player.destroyPlayer()
+        NotificationUtil.getInstance().cancelNotificationAndStopForeground(player.service.instance)
         player.playQueue = null
         policy.resetPrevious()
         resumeHeadUuid = null

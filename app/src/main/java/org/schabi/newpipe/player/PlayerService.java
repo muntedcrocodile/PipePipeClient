@@ -165,6 +165,7 @@ public class PlayerService extends Service implements PlayerServiceInterface {
 
         if (!player.exoPlayerIsNull()) {
             player.saveWasPlaying();
+            player.saveStreamProgressState();
 
             // Releases wifi & cpu, disables keepScreenOn, etc.
             // We can't just pause the player here because it will make transition

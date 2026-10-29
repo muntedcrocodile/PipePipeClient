@@ -46,6 +46,14 @@ class QueuePlaybackPolicyTest {
         }
     }
 
+    @Test fun pendingOnlyQueueRestoresPausedAndDoesNotCountAsFirstEnqueue() {
+        assertTrue(QueuePlaybackPolicy.hasUnfinished(empty = true, complete = false))
+        val firstEnqueue = !QueuePlaybackPolicy.hasUnfinished(empty = true, complete = false)
+        assertFalse(QueuePlaybackPolicy.enqueueReady(firstEnqueue, false, false))
+        assertFalse(QueuePlaybackPolicy.hasUnfinished(empty = true, complete = true))
+        assertTrue(QueuePlaybackPolicy.hasUnfinished(empty = false, complete = true))
+    }
+
     @Test fun enqueueStartsOnlyEmptyQueueAndPreservesAttachedPlaybackReadiness() {
         assertTrue(QueuePlaybackPolicy.enqueueReady(true, false, false))
         assertFalse(QueuePlaybackPolicy.enqueueReady(false, false, true))
