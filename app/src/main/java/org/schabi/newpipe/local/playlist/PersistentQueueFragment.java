@@ -22,6 +22,9 @@ import io.reactivex.rxjava3.disposables.CompositeDisposable;
 public final class PersistentQueueFragment extends BaseFragment {
     private org.schabi.newpipe.player.Player activePlayer;
     private boolean bound;
+    private boolean connecting;
+    private final java.util.ArrayDeque<PlayerMediaItem> pendingSelections =
+            new java.util.ArrayDeque<>();
     private final android.content.ServiceConnection connection = new android.content.ServiceConnection() {
         @Override
         public void onServiceConnected(final android.content.ComponentName name,
@@ -29,10 +32,20 @@ public final class PersistentQueueFragment extends BaseFragment {
             if (binder instanceof org.schabi.newpipe.player.PlayerBinderInterface) {
                 activePlayer = ((org.schabi.newpipe.player.PlayerBinderInterface) binder).getPlayer();
             }
+            connecting = false;
+            drainSelections();
+        }
+        @Override
+        public void onNullBinding(final android.content.ComponentName name) {
+            activePlayer = null;
+            connecting = false;
+            drainSelections();
         }
         @Override
         public void onServiceDisconnected(final android.content.ComponentName name) {
             activePlayer = null;
+            connecting = false;
+            drainSelections();
         }
     };
     private PersistentPlayQueue queue;
@@ -52,7 +65,9 @@ public final class PersistentQueueFragment extends BaseFragment {
         final android.content.Intent service = new android.content.Intent(requireContext(),
                 org.schabi.newpipe.util.DeviceUtils.getPlayerServiceClass());
         service.setAction(org.schabi.newpipe.player.PlayerIntentConstants.BIND_PLAYER_HOLDER_ACTION);
+        connecting = true;
         bound = requireContext().bindService(service, connection, 0);
+        connecting = bound;
         final RecyclerView list = new RecyclerView(requireContext());
         list.setLayoutManager(new LinearLayoutManager(requireContext()));
         adapter = new PlayQueueAdapter(requireContext(), queue);
@@ -74,14 +89,8 @@ public final class PersistentQueueFragment extends BaseFragment {
         adapter.setSelectedListener(new PlayQueueItemBuilder.OnSelectedListener() {
             @Override
             public void selected(final PlayerMediaItem item, final View view) {
-                QueueViewActions.edit(requireContext(), () -> {
-                    if (activePlayer != null && activePlayer.getPlayQueue() == queue) {
-                        activePlayer.selectQueueItem(item);
-                    } else {
-                        queue.setIndex(queue.indexOf(item));
-                        NavigationHelper.playOnMainPlayer(activity, queue);
-                    }
-                });
+                pendingSelections.add(item);
+                drainSelections();
             }
             @Override
             public void held(final PlayerMediaItem item, final View view) {
@@ -128,6 +137,26 @@ public final class PersistentQueueFragment extends BaseFragment {
         return root;
     }
 
+    private void drainSelections() {
+        if (connecting || !isAdded()) {
+            return;
+        }
+        while (!pendingSelections.isEmpty()) {
+            final PlayerMediaItem item = pendingSelections.removeFirst();
+            if (queue.indexOf(item) < 0) {
+                continue;
+            }
+            QueueViewActions.edit(requireContext(), () -> {
+                if (activePlayer != null && activePlayer.getPlayQueue() == queue) {
+                    activePlayer.selectQueueItem(item);
+                } else {
+                    queue.setIndex(queue.indexOf(item));
+                    NavigationHelper.playOnMainPlayer(activity, queue);
+                }
+            });
+        }
+    }
+
     @Override
     public void onResume() {
         super.onResume();
@@ -163,6 +192,8 @@ public final class PersistentQueueFragment extends BaseFragment {
             bound = false;
         }
         activePlayer = null;
+        connecting = false;
+        pendingSelections.clear();
         adapter.dispose();
         touch.attachToRecyclerView(null);
         super.onDestroyView();
