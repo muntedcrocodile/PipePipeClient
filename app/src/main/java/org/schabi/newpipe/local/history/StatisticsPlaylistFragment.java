@@ -187,12 +187,8 @@ public class StatisticsPlaylistFragment
                 return null;
             }
             return new VideoSwipeActions.Row(
-                    ((StreamStatisticsEntry) item).toStreamInfoItem(), null, () -> {
-                        final int index = itemListAdapter.getItemsList().indexOf(item);
-                        if (index >= 0) {
-                            deleteEntry(index);
-                        }
-                    });
+                    ((StreamStatisticsEntry) item).toStreamInfoItem(), null,
+                    () -> deleteEntry((StreamStatisticsEntry) item));
         });
 
 

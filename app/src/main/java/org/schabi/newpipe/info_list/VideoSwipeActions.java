@@ -210,12 +210,13 @@ public final class VideoSwipeActions {
                 new org.schabi.newpipe.local.history.HistoryRecordManager(context)
                         .markAsWatched(row.item)
                         .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
-                        .subscribe(() -> Toast.makeText(context, R.string.mark_as_watched,
+                        .subscribe(streamId -> Toast.makeText(context, R.string.mark_as_watched,
                                         Toast.LENGTH_SHORT).show(),
                                 error -> org.schabi.newpipe.error.ErrorUtil.createNotification(context,
                                         new org.schabi.newpipe.error.ErrorInfo(error,
                                                 org.schabi.newpipe.error.UserAction.REQUESTED_STREAM,
-                                                "Marking video watched", row.item.getServiceId())));
+                                                "Marking video watched", row.item.getServiceId())),
+                                () -> unavailable(context));
                 return;
             case "channel":
                 org.schabi.newpipe.util.SparseItemUtil.fetchUploaderUrlIfSparse(context,
