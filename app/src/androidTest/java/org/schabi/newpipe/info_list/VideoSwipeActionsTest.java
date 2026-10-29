@@ -87,6 +87,30 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void sparseModeSwitchIsSubmittedBeforeFollowingPopulatedVideo() {
+        final StreamInfoItem sparse = video("sparse-X");
+        sparse.setDuration(-1);
+        sparse.setUploaderUrl(null);
+        final StreamInfoItem populated = video("populated-Y");
+        populated.setDuration(60);
+        populated.setUploaderUrl("https://example.com/channel");
+        // Cover both single-mode and mixed-mode gestures: no extraction callback may delay X.
+        for (final String firstMode : Arrays.asList("background", "popup")) {
+            for (final String secondMode : Arrays.asList("background", "popup")) {
+                final java.util.List<String> submitted = new java.util.ArrayList<>();
+                final java.util.function.BiConsumer<String,
+                        org.schabi.newpipe.player.playqueue.SinglePlayQueue> start = (mode, queue) ->
+                        submitted.add(mode + ":" + queue.getItem().getUrl());
+                assertEquals(true, VideoSwipeActions.dispatchPlayerMode(firstMode, sparse, start));
+                assertEquals(Arrays.asList(firstMode + ":" + sparse.getUrl()), submitted);
+                assertEquals(true, VideoSwipeActions.dispatchPlayerMode(secondMode, populated, start));
+                assertEquals(Arrays.asList(firstMode + ":" + sparse.getUrl(),
+                        secondMode + ":" + populated.getUrl()), submitted);
+            }
+        }
+    }
+
+    @Test
     public void legacyPlaylistActionsApplyOnlyBeforeOptIn() {
         final VideoSwipeActions.Row playlist = new VideoSwipeActions.Row(video("one"), () -> { }, null);
         // Existing users retain the old default and their explicit action, always physical right.
