@@ -62,6 +62,7 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 
 public class HistoryRecordManager {
+    private final Context applicationContext;
     private final AppDatabase database;
     private final StreamDAO streamTable;
     private static final int DELETE_BATCH_SIZE = 500;
@@ -73,6 +74,7 @@ public class HistoryRecordManager {
     private final String streamHistoryKey;
 
     public HistoryRecordManager(final Context context) {
+        applicationContext = context.getApplicationContext();
         database = NewPipeDatabase.getInstance(context);
         streamTable = database.streamDAO();
         streamHistoryTable = database.streamHistoryDAO();
@@ -162,10 +164,13 @@ public class HistoryRecordManager {
     }
 
     public Completable deleteStreamHistoryAndState(final long streamId) {
-        return Completable.fromAction(() -> database.runInTransaction(() -> {
-            streamStateTable.deleteState(streamId);
-            streamHistoryTable.deleteStreamHistory(streamId);
-        })).subscribeOn(Schedulers.io());
+        return Completable.fromAction(() -> {
+            database.runInTransaction(() -> {
+                streamStateTable.deleteState(streamId);
+                streamHistoryTable.deleteStreamHistory(streamId);
+            });
+            clearQueueRecovery(streamId);
+        }).subscribeOn(Schedulers.io());
     }
 
     /**
@@ -187,11 +192,13 @@ public class HistoryRecordManager {
 
     public Single<Integer> deleteWholeStreamHistory() {
         return Single.fromCallable(streamHistoryTable::deleteAll)
+                .doOnSuccess(count -> queueManager().getQueue().clearRecovery())
                 .subscribeOn(Schedulers.io());
     }
 
     public Single<Integer> deleteCompleteStreamStateHistory() {
         return Single.fromCallable(streamStateTable::deleteAll)
+                .doOnSuccess(count -> queueManager().getQueue().clearRecovery())
                 .subscribeOn(Schedulers.io());
     }
 
@@ -235,7 +242,28 @@ public class HistoryRecordManager {
             entities.add(entry.toStreamHistoryEntity());
         }
         return Single.fromCallable(() -> streamHistoryTable.delete(entities))
+                .doOnSuccess(count -> {
+                    for (final StreamHistoryEntry entry : entries) {
+                        final var stream = entry.getStreamEntity();
+                        queueManager().getQueue().clearRecovery(stream.getServiceId(), stream.getUrl());
+                    }
+                })
                 .subscribeOn(Schedulers.io());
+    }
+
+    private org.schabi.newpipe.player.playqueue.PersistentQueueManager queueManager() {
+        return org.schabi.newpipe.player.playqueue.PersistentQueueManager
+                .getInstance(applicationContext);
+    }
+
+    private void clearQueueRecovery(final long streamId) {
+        try (android.database.Cursor cursor = database.getOpenHelper().getReadableDatabase()
+                .query("SELECT service_id, url FROM streams WHERE uid = ?",
+                        new Object[]{streamId})) {
+            if (cursor.moveToFirst()) {
+                queueManager().getQueue().clearRecovery(cursor.getInt(0), cursor.getString(1));
+            }
+        }
     }
 
     private boolean isStreamHistoryEnabled() {
