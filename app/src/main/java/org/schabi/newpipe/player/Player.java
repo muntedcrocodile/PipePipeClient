@@ -550,8 +550,11 @@ public final class Player {
         }
 
         liveIdle = true;
-        // A live stream resumes at the live edge, not at the position it happened to be paused at.
-        if (playQueue != null) {
+        // Ordinary recovery is transient. Persistent occurrence progress remains owned by its
+        // checkpoint: pause cleanup must not issue another durable write after that write fails.
+        // Live sources ignore recovery when resumed, so retaining it cannot seek off the live edge.
+        if (playQueue != null && !(playQueue instanceof
+                org.schabi.newpipe.player.playqueue.PersistentPlayQueue)) {
             playQueue.unsetRecovery(playQueue.getIndex());
         }
         // The live chat extractor owns its own connection/poll and is not driven by ExoPlayer.
@@ -1257,7 +1260,8 @@ public final class Player {
     MediaSource sourceOf(final PlayerMediaItem item, final StreamInfo info) {
         final long recoveryPosition = playQueue == null
                 ? PlayQueue.RECOVERY_UNSET : playQueue.getRecoveryPosition(item);
-        final long initialPositionMs = shouldSeek()
+        final long initialPositionMs = !StreamTypeUtil.isLiveStream(info.getStreamType())
+                && shouldSeek()
                 && recoveryPosition != PlayQueue.RECOVERY_UNSET
                 ? recoveryPosition : 0;
         return sourceResolver.resolve(playerType, isAudioOnly, info, initialPositionMs,
