@@ -67,7 +67,9 @@ public final class PersistentQueueFragment extends BaseFragment {
                 org.schabi.newpipe.util.DeviceUtils.getPlayerServiceClass());
         service.setAction(org.schabi.newpipe.player.PlayerIntentConstants.BIND_PLAYER_HOLDER_ACTION);
         connecting = true;
-        bound = requireContext().bindService(service, connection, 0);
+        // A non-creating bind can return true for an absent service without ever delivering
+        // onServiceConnected, leaving every queued row selection waiting indefinitely.
+        bound = requireContext().bindService(service, connection, android.content.Context.BIND_AUTO_CREATE);
         connecting = bound;
         final RecyclerView list = new RecyclerView(requireContext());
         list.setLayoutManager(new LinearLayoutManager(requireContext()));
