@@ -201,6 +201,89 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void queueViewConnectsToColdPlayerWithoutStartingPlayback() {
+        final String key = "persistent_queue_enabled";
+        final boolean had = prefs.contains(key);
+        final boolean old = prefs.getBoolean(key, true);
+        try {
+            onMain(() -> {
+                org.schabi.newpipe.player.helper.PlayerHolder.getInstance().stopService();
+                context.stopService(new Intent(context,
+                        org.schabi.newpipe.util.DeviceUtils.getPlayerServiceClass()));
+                prefs.edit().putBoolean(key, true).commit();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            withActivity(activity -> {
+                final var fragment = new org.schabi.newpipe.local.playlist.PersistentQueueFragment();
+                onMain(() -> {
+                    final var root = new android.widget.FrameLayout(activity);
+                    root.setId(R.id.fragment_holder);
+                    activity.setContentView(root);
+                    activity.getSupportFragmentManager().beginTransaction()
+                            .replace(R.id.fragment_holder, fragment).commitNow();
+                });
+                final org.schabi.newpipe.player.Player[] connected = {null};
+                final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
+                do {
+                    onMain(() -> {
+                        try {
+                            final Field field = fragment.getClass().getDeclaredField("activePlayer");
+                            field.setAccessible(true);
+                            connected[0] = (org.schabi.newpipe.player.Player) field.get(fragment);
+                        } catch (final ReflectiveOperationException error) {
+                            throw new AssertionError(error);
+                        }
+                    });
+                    if (connected[0] != null) break;
+                    android.os.SystemClock.sleep(25);
+                } while (android.os.SystemClock.uptimeMillis() < deadline);
+                assertNotNull("A cold queue view must not wait forever for an absent service",
+                        connected[0]);
+                onMain(() -> {
+                    assertEquals("Opening the queue must not start playback",
+                            false, connected[0].isPlaying());
+                    final var restored = connected[0].getPlayQueue();
+                    if (restored != null && !restored.isEmpty()) {
+                        assertEquals("An unfinished queue must restore paused",
+                                false, connected[0].getPlayWhenReady());
+                    }
+                    // An empty player's initial playWhenReady flag is not active playback.
+                });
+            });
+        } finally {
+            onMain(() -> {
+                org.schabi.newpipe.player.helper.PlayerHolder.getInstance().stopService();
+                context.stopService(new Intent(context,
+                        org.schabi.newpipe.util.DeviceUtils.getPlayerServiceClass()));
+                final var editor = prefs.edit();
+                if (had) editor.putBoolean(key, old); else editor.remove(key);
+                editor.commit();
+            });
+        }
+    }
+
+    @Test
+    public void lateAnnouncementDoesNotShowAWindowAfterActivityFinish() {
+        final Activity launched = InstrumentationRegistry.getInstrumentation().startActivitySync(
+                new Intent(context, org.schabi.newpipe.MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        onMain(launched::finish);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        onMain(() -> {
+            assertEquals(true, launched.isFinishing());
+            try {
+                final Method show = org.schabi.newpipe.MainActivity.class.getDeclaredMethod(
+                        "showAnnouncement", String.class, String.class);
+                show.setAccessible(true);
+                // Reproduce a download callback already queued when its activity was closed.
+                show.invoke(launched, "Late test announcement", "late-test-id");
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+        });
+    }
+
+    @Test
     public void queuedLocalLayoutPreferenceNotificationSurvivesFragmentDetach() {
         final String key = context.getString(R.string.list_view_mode_key);
         final boolean had = prefs.contains(key);
