@@ -60,7 +60,8 @@ class PlayerMetadataController(private val player: Player) {
             if (tag === currentMetadata) {
                 return@ifPresent // we still have the same metadata, no need to do anything
             }
-            val previousInfo = Optional.ofNullable(currentMetadata)
+            val previousMetadata = currentMetadata
+            val previousInfo = Optional.ofNullable(previousMetadata)
                 .flatMap { item: PlayerMediaItem -> item.maybeStreamInfo }.orElse(null)
             currentMetadata = tag
 
@@ -82,6 +83,10 @@ class PlayerMetadataController(private val player: Player) {
                 if (previousInfo == null || previousInfo.url != info.url) {
                     // only update with the new stream info if it has actually changed
                     updateMetadataWith(info)
+                } else if (previousMetadata?.uuid != tag.uuid) {
+                    // The content is unchanged, but listeners waiting for a queue occurrence
+                    // must learn that its metadata now belongs to the new head (duplicate URL).
+                    player.notifyMetadataUpdateToListeners()
                 }
             }
         }

@@ -229,6 +229,15 @@ public class VideoDetailFragment
     private int pendingVideoServiceId;
     @Nullable
     private String pendingVideoUrl;
+    // A mode switch follows the active queue; explicit Play keeps the selected video's intent.
+    private boolean pendingVideoFollowsQueue;
+    @Nullable
+    private PlayQueue pendingVideoQueue;
+    @Nullable
+    private String pendingVideoOccurrenceId;
+    @Nullable
+    private String pendingVideoInitialPlayerOccurrenceId;
+    private boolean pendingVideoPlayerIntentObserved;
 
     @Nullable
     private StreamInfo currentInfo = null;
@@ -286,7 +295,11 @@ public class VideoDetailFragment
             addVideoPlayerView();
         }
 
-        if (playAfterConnect
+        if (pendingVideoOpen) {
+            // A delayed bind must not turn a queue switch into a fresh explicit Play or
+            // replace the occurrence/play intent already waiting for metadata.
+            openPendingVideoPlayer();
+        } else if (playAfterConnect
                 || (currentInfo != null
                 && isAutoplayEnabled()
                 && player.getParentActivity() == null)) {
@@ -377,6 +390,11 @@ public class VideoDetailFragment
         outState.putBoolean("pendingVideoFullscreen", pendingVideoFullscreen);
         outState.putInt("pendingVideoServiceId", pendingVideoServiceId);
         outState.putString("pendingVideoUrl", pendingVideoUrl);
+        outState.putBoolean("pendingVideoFollowsQueue", pendingVideoFollowsQueue);
+        outState.putString("pendingVideoOccurrenceId", pendingVideoOccurrenceId);
+        outState.putString("pendingVideoInitialPlayerOccurrenceId",
+                pendingVideoInitialPlayerOccurrenceId);
+        outState.putBoolean("pendingVideoPlayerIntentObserved", pendingVideoPlayerIntentObserved);
     }
 
     @Override
@@ -393,6 +411,12 @@ public class VideoDetailFragment
         pendingVideoSelectionGeneration = videoSelectionGeneration;
         pendingVideoServiceId = savedInstanceState.getInt("pendingVideoServiceId", serviceId);
         pendingVideoUrl = savedInstanceState.getString("pendingVideoUrl", url);
+        pendingVideoFollowsQueue = savedInstanceState.getBoolean("pendingVideoFollowsQueue", false);
+        pendingVideoOccurrenceId = savedInstanceState.getString("pendingVideoOccurrenceId");
+        pendingVideoInitialPlayerOccurrenceId = savedInstanceState.getString(
+                "pendingVideoInitialPlayerOccurrenceId");
+        pendingVideoPlayerIntentObserved = savedInstanceState.getBoolean(
+                "pendingVideoPlayerIntentObserved", false);
     }
 
     @Override
@@ -1125,9 +1149,20 @@ public class VideoDetailFragment
 
     private void onStreamInfoLoaded(final StreamInfo result, final long selectionGeneration,
                                     final boolean addToBackStack) {
+        synchronizePendingVideoQueue(playQueue);
         if (selectionGeneration != videoSelectionGeneration || activity == null || binding == null
                 || (pendingVideoOpen && !isPendingVideoInfo(result))) {
             return;
+        }
+        if (pendingVideoOpen && pendingVideoOccurrenceId == null) {
+            // An old service queue may have arrived before explicit Play was requested. Bind
+            // extraction to its selected stream, rather than submitting that unrelated queue.
+            final PlayerMediaItem item = playQueue == null ? null : playQueue.getItem();
+            if (item == null || !isVideoInfoForItem(result, item)) {
+                playQueue = new SinglePlayQueue(result);
+            }
+            pendingVideoQueue = playQueue;
+            pendingVideoOccurrenceId = playQueue.getItem().getUuid();
         }
         isLoading.set(false);
         hideMainPlayerOnLoadingNewStream();
@@ -1527,6 +1562,16 @@ public class VideoDetailFragment
      * @param directlyFullscreenIfApplicable whether to request fullscreen directly
      */
     public void openVideoPlayer(final boolean directlyFullscreenIfApplicable) {
+        openVideoPlayer(directlyFullscreenIfApplicable, false);
+    }
+
+    /** Switches the active queue to video, retaining its latest transport intent and head. */
+    public void switchToVideoPlayer(final boolean directlyFullscreenIfApplicable) {
+        openVideoPlayer(directlyFullscreenIfApplicable, true);
+    }
+
+    private void openVideoPlayer(final boolean directlyFullscreenIfApplicable,
+                                 final boolean followsQueue) {
         if (currentInfo == null) {
             // Explicit playback (including first enqueue) can arrive before detail extraction.
             // Bind/attach only once metadata is ready, rather than losing this request or
@@ -1535,8 +1580,18 @@ public class VideoDetailFragment
             pendingVideoFullscreen = directlyFullscreenIfApplicable;
             pendingVideoSelectionGeneration = videoSelectionGeneration;
             final PlayerMediaItem item = playQueue == null ? null : playQueue.getItem();
-            pendingVideoServiceId = url != null || item == null ? serviceId : item.getServiceId();
-            pendingVideoUrl = url != null || item == null ? url : item.getUrl();
+            pendingVideoFollowsQueue = followsQueue || url == null;
+            pendingVideoServiceId = (!followsQueue && url != null) || item == null
+                    ? serviceId : item.getServiceId();
+            pendingVideoUrl = (!followsQueue && url != null) || item == null ? url : item.getUrl();
+            pendingVideoQueue = item != null && pendingVideoServiceId == item.getServiceId()
+                    && Objects.equals(pendingVideoUrl, item.getUrl()) ? playQueue : null;
+            pendingVideoOccurrenceId = pendingVideoQueue == null ? null : item.getUuid();
+            final PlayQueue playerQueue = player == null ? null : player.getPlayQueue();
+            pendingVideoInitialPlayerOccurrenceId = playerQueue == null || playerQueue.getItem() == null
+                    ? null : playerQueue.getItem().getUuid();
+            pendingVideoPlayerIntentObserved = false;
+            observePendingVideoPlayerIntent();
             return;
         }
         cancelPendingVideoOpen();
@@ -1561,14 +1616,17 @@ public class VideoDetailFragment
     }
 
     private boolean openPendingVideoPlayer() {
+        synchronizePendingVideoQueue(playQueue);
         if (!pendingVideoOpen || currentInfo == null || activity == null || binding == null
                 || !isPendingVideoInfo(currentInfo)) {
             return false;
         }
-        // Metadata can take long enough for notification/media-session controls to change
-        // the connected player's intent. Read playWhenReady, including while buffering,
-        // rather than replaying the autoplay snapshot taken when the switch was requested.
-        if (isPlayerAvailable() && !player.exoPlayerIsNull()) {
+        observePendingVideoPlayerIntent();
+        // Follow transport controls only for the intended occurrence. An explicit Play for B
+        // must not inherit paused A's state, even when both use the same player service.
+        if (isPendingVideoPlayerOccurrence() && (pendingVideoFollowsQueue
+                || pendingVideoPlayerIntentObserved
+                || !Objects.equals(pendingVideoInitialPlayerOccurrenceId, pendingVideoOccurrenceId))) {
             setAutoPlay(player.getPlayWhenReady());
         }
         final boolean fullscreen = pendingVideoFullscreen;
@@ -1584,10 +1642,80 @@ public class VideoDetailFragment
                 || pendingVideoUrl.equals(info.getOriginalUrl()))));
     }
 
+    private static boolean isVideoInfoForItem(final StreamInfo info, final PlayerMediaItem item) {
+        return item.getServiceId() == info.getServiceId()
+                && (item.getUrl().equals(info.getUrl()) || item.getUrl().equals(info.getOriginalUrl()));
+    }
+
+    private boolean isPendingVideoPlayerOccurrence() {
+        return player != null && !player.exoPlayerIsNull() && pendingVideoOccurrenceId != null
+                && player.getPlayQueue() != null && player.getPlayQueue().getItem() != null
+                && pendingVideoOccurrenceId.equals(player.getPlayQueue().getItem().getUuid());
+    }
+
+    private void observePendingVideoPlayerIntent() {
+        if (pendingVideoOpen && isPendingVideoPlayerOccurrence()
+                && player.getPlayWhenReady() == autoPlayEnabled) {
+            pendingVideoPlayerIntentObserved = true;
+        }
+    }
+
+    /** Returns whether this is the queue/occurrence targeted by the outstanding request. */
+    private boolean synchronizePendingVideoQueue(@Nullable final PlayQueue queue) {
+        if (!pendingVideoOpen || queue == null) {
+            return false;
+        }
+        final PlayerMediaItem item = queue.getItem();
+        if (queue != pendingVideoQueue) {
+            if (item == null) {
+                return false;
+            }
+            if (pendingVideoOccurrenceId != null) {
+                if (!pendingVideoOccurrenceId.equals(item.getUuid())) {
+                    return false;
+                }
+            } else if (!(pendingVideoFollowsQueue && pendingVideoUrl == null)
+                    && (pendingVideoServiceId != item.getServiceId()
+                    || !Objects.equals(pendingVideoUrl, item.getUrl()))) {
+                return false;
+            }
+        }
+        pendingVideoQueue = queue;
+        if (item == null) {
+            invalidateVideoSelection();
+            setAutoPlay(false);
+        } else if (pendingVideoOccurrenceId != null
+                && !pendingVideoOccurrenceId.equals(item.getUuid())) {
+            // Next/removal supersedes extraction for the old occurrence, including duplicates
+            // with the same URL. A switch follows the queue instead of waiting forever for A.
+            videoSelectionGeneration++;
+            if (currentWorker != null) {
+                currentWorker.dispose();
+            }
+            pendingVideoSelectionGeneration = videoSelectionGeneration;
+            pendingVideoServiceId = item.getServiceId();
+            pendingVideoUrl = item.getUrl();
+            pendingVideoFollowsQueue = true;
+            currentInfo = null;
+            setInitialData(item.getServiceId(), item.getUrl(), item.getTitle(), queue);
+        }
+        pendingVideoOccurrenceId = item == null ? null : item.getUuid();
+        if (item != null && pendingVideoUrl == null) {
+            pendingVideoServiceId = item.getServiceId();
+            pendingVideoUrl = item.getUrl();
+        }
+        return true;
+    }
+
     private void cancelPendingVideoOpen() {
         pendingVideoOpen = false;
         pendingVideoFullscreen = false;
         pendingVideoUrl = null;
+        pendingVideoQueue = null;
+        pendingVideoOccurrenceId = null;
+        pendingVideoInitialPlayerOccurrenceId = null;
+        pendingVideoFollowsQueue = false;
+        pendingVideoPlayerIntentObserved = false;
     }
 
     private void invalidateVideoSelection() {
@@ -2312,6 +2440,15 @@ public class VideoDetailFragment
 
     @Override
     public void onQueueUpdate(final PlayQueue queue) {
+        if (pendingVideoOpen && !synchronizePendingVideoQueue(queue)) {
+            if (!pendingVideoFollowsQueue) {
+                // A service reconnect can still report A while explicit Play B extracts.
+                return;
+            }
+            // A replacement queue supersedes a switch of the previous active queue.
+            invalidateVideoSelection();
+            setAutoPlay(false);
+        }
         playQueue = queue;
         if (DEBUG) {
             Log.d(TAG, "onQueueUpdate() called with: serviceId = ["
@@ -2348,6 +2485,7 @@ public class VideoDetailFragment
                                  final RepeatMode repeatMode,
                                  final boolean shuffled,
                                  final PlayerPlaybackParameters parameters) {
+        observePendingVideoPlayerIntent();
         setOverlayPlayPauseImage(player != null && player.isPlaying());
 
         switch (state) {
@@ -2382,8 +2520,19 @@ public class VideoDetailFragment
 
     @Override
     public void onMetadataUpdate(final StreamInfo info, final PlayQueue queue) {
-        if (pendingVideoOpen && queue.equals(playQueue) && !isPendingVideoInfo(info)) {
+        // The queue can advance before ExoPlayer replaces its metadata. In particular, URLs
+        // alone cannot distinguish two occurrences of the same video.
+        final PlayerMediaItem head = queue.getItem();
+        final PlayerMediaItem metadata = player == null ? null : player.getCurrentMetadata();
+        if (head == null || !isVideoInfoForItem(info, head)
+                || (metadata != null && !head.getUuid().equals(metadata.getUuid()))) {
             return;
+        }
+        if (pendingVideoOpen && (!synchronizePendingVideoQueue(queue) || !isPendingVideoInfo(info))) {
+            return;
+        }
+        if (pendingVideoOpen) {
+            playQueue = queue;
         }
         if (player != null) {
             final SponsorBlockMode mode = SponsorBlockHelper.getSkippingMode(requireContext());

@@ -402,7 +402,7 @@ public final class NavigationHelper {
                 // Situation when user switches from players to main player. All needed data is
                 // here, we can start watching (assuming newQueue equals playQueue).
                 // Starting directly in fullscreen if the previous player type was popup.
-                detailFragment.openVideoPlayer(playerType == PlayerService.PlayerType.POPUP
+                detailFragment.switchToVideoPlayer(playerType == PlayerService.PlayerType.POPUP
                         || PlayerHelper.isStartMainPlayerFullscreenEnabled(context));
             } else if (loadVideo) {
                 detailFragment.selectAndLoadVideo(serviceId, url, title, playQueue);

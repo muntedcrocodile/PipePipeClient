@@ -304,6 +304,229 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void serviceConnectionKeepsTheDeferredSwitchOriginAfterNotificationPause() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.fragment.switchToVideoPlayer(false);
+            fixture.player.playPause();
+            fixture.fragment.onServiceConnected(fixture.player,
+                    (org.schabi.newpipe.player.mediasession.PlayerServiceInterface)
+                            readField(fixture.fragment, "playerService"), true);
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", false);
+        });
+    }
+
+    @Test
+    public void workerMetadataKeepsExplicitPlayBDespiteUnrelatedPausedA() {
+        assertExplicitPlayIgnoresUnrelatedPause(false);
+    }
+
+    @Test
+    public void playerMetadataKeepsExplicitPlayBDespiteUnrelatedPausedA() {
+        assertExplicitPlayIgnoresUnrelatedPause(true);
+    }
+
+    private void assertExplicitPlayIgnoresUnrelatedPause(final boolean playerMetadata) {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.player.playPause();
+            writeField(fixture.player, "playerType",
+                    org.schabi.newpipe.player.PlayerService.PlayerType.AUDIO);
+            final PlayQueue oldQueue = fixture.queue();
+            fixture.select("B");
+            fixture.requestExplicitPlayback();
+            // A reconnect must not replace the new detail selection with the old queue.
+            fixture.fragment.onQueueUpdate(oldQueue);
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), oldQueue);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(fixture.info("B").getUrl(), fixture.queue().getItem().getUrl());
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            if (playerMetadata) {
+                fixture.fragment.onMetadataUpdate(fixture.info("B"), fixture.queue());
+            } else {
+                fixture.complete(fixture.info("B"), fixture.generation());
+            }
+            fixture.assertOpened("B", true);
+        });
+    }
+
+    @Test
+    public void explicitPlayBHonorsLaterPauseAfterThePlayerAdoptsB() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.select("B");
+            fixture.requestExplicitPlayback();
+            writeField(fixture.player, "playQueue", fixture.queue());
+            fixture.fragment.onQueueUpdate(fixture.queue());
+            fixture.player.playPause();
+            fixture.complete(fixture.info("B"), fixture.generation());
+            fixture.assertOpened("B", false);
+        });
+    }
+
+    @Test
+    public void explicitPlayBReplacesAnUnrelatedQueueReportedBeforeTheThumbnailTap() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.player.playPause();
+            final PlayQueue oldQueue = fixture.queue();
+            fixture.select("B");
+            fixture.fragment.onQueueUpdate(oldQueue);
+            fixture.requestExplicitPlayback();
+            fixture.complete(fixture.info("B"), fixture.generation());
+            fixture.assertOpened("B", true);
+        });
+    }
+
+    @Test
+    public void explicitPlayOfPausedCurrentOccurrenceKeepsItsNewPlayIntent() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.player.playPause();
+            fixture.requestExplicitPlayback();
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", true);
+        });
+    }
+
+    @Test
+    public void explicitPlayOfCurrentOccurrenceHonorsPauseAfterObservedPlaybackRequest() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.player.playPause();
+            fixture.requestExplicitPlayback();
+            fixture.player.playPause();
+            fixture.fragment.onPlaybackUpdate(org.schabi.newpipe.player.PlayerPlaybackState.BUFFERING,
+                    org.schabi.newpipe.player.RepeatMode.OFF, false,
+                    new org.schabi.newpipe.player.PlayerPlaybackParameters(1.0f, 1.0f));
+            fixture.player.playPause();
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", false);
+        });
+    }
+
+    @Test
+    public void explicitReplayDoesNotInheritPauseFromAnotherOccurrenceOfTheSameUrl() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.player.playPause();
+            final PlayQueue oldQueue = fixture.queue();
+            fixture.select("A");
+            org.junit.Assert.assertNotEquals(oldQueue.getItem().getUuid(),
+                    fixture.queue().getItem().getUuid());
+            fixture.requestExplicitPlayback();
+            fixture.fragment.onQueueUpdate(oldQueue);
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), oldQueue);
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", true);
+        });
+    }
+
+    @Test
+    public void collapsedQueueSwitchFollowsNextBeforeEitherVideoHasMetadata() {
+        assertCollapsedQueueSwitchFollowsNext(true);
+    }
+
+    @Test
+    public void collapsedQueueSwitchDetectsNextFromMetadataWithoutAQueueUpdate() {
+        assertCollapsedQueueSwitchFollowsNext(false);
+    }
+
+    private void assertCollapsedQueueSwitchFollowsNext(final boolean queueUpdate) {
+        withVideoOpen(fixture -> {
+            fixture.prepareColdQueue("A", "B");
+            fixture.fragment.switchToVideoPlayer(false);
+            final PlayQueue queue = fixture.queue();
+            queue.remove(0); // Notification Next consumes A in this same queue instance.
+            if (queueUpdate) fixture.fragment.onQueueUpdate(queue);
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), queue);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            fixture.fragment.onMetadataUpdate(fixture.info("B"), queue);
+            fixture.assertOpened("B", true);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+        });
+    }
+
+    @Test
+    public void nextSupersedesAWorkerBeforeCompletingTheSwitchWithBMetadata() {
+        withVideoOpen(fixture -> {
+            fixture.queue().append(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forQueueItem(fixture.info("B")));
+            fixture.fragment.switchToVideoPlayer(false);
+            final long generation = fixture.generation();
+            fixture.queue().remove(0);
+            fixture.fragment.onQueueUpdate(fixture.queue());
+            fixture.complete(fixture.info("A"), generation);
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            fixture.fragment.onMetadataUpdate(fixture.info("B"), fixture.queue());
+            fixture.assertOpened("B", true);
+        });
+    }
+
+    @Test
+    public void nextToDuplicateUrlRejectsThePreviousOccurrencesWorker() {
+        withVideoOpen(fixture -> {
+            fixture.queue().append(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forQueueItem(fixture.info("A")));
+            fixture.fragment.switchToVideoPlayer(false);
+            final long generation = fixture.generation();
+            fixture.queue().remove(0);
+            // Even without a queue callback the old worker must not consume the new request.
+            fixture.complete(fixture.info("A"), generation);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            fixture.assertOpened("A", true);
+        });
+    }
+
+    @Test
+    public void nextToDuplicateUrlWaitsForMetadataFromTheCurrentOccurrence() {
+        withVideoOpen(fixture -> {
+            fixture.prepareColdQueue("A", "A");
+            fixture.connectBufferingPlayer();
+            final var oldHead = fixture.queue().getItem();
+            fixture.setPlayerMetadata(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forStreamInfo(fixture.info("A")).withUuid(oldHead.getUuid()));
+            fixture.fragment.switchToVideoPlayer(false);
+            fixture.queue().remove(0);
+            fixture.fragment.onQueueUpdate(fixture.queue());
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            // Exercise the production Exo metadata event and listener fan-out. A duplicate URL
+            // must emit its new occurrence even though its stream info did not change.
+            fixture.deliverPlayerMetadata(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forStreamInfo(fixture.info("A")).withUuid(fixture.queue().getItem().getUuid()));
+            fixture.assertOpened("A", true);
+        });
+    }
+
+    @Test
+    public void playerMetadataCompletesDeferredSwitchWithACanonicalUrl() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.switchToVideoPlayer(false);
+            final var canonical = new org.schabi.newpipe.extractor.stream.StreamInfo(
+                    0, "https://example.com/canonical-A", fixture.info("A").getUrl(),
+                    StreamType.VIDEO_STREAM, "A", "A", 0);
+            canonical.setUploaderName("test uploader");
+            canonical.setThumbnailUrl("");
+            fixture.fragment.onMetadataUpdate(canonical, fixture.queue());
+            fixture.assertOpened("A", true);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+        });
+    }
+
+    @Test
     public void serviceStopCancelsDeferredOpenWithoutLateWorkerAutoplay() {
         withVideoOpen(fixture -> {
             fixture.fragment.setAutoPlay(true);
@@ -319,7 +542,7 @@ public class VideoSwipeActionsTest {
         withVideoOpen(fixture -> {
             fixture.connectBufferingPlayer();
             fixture.fragment.setAutoPlay(true);
-            fixture.fragment.openVideoPlayer(false);
+            fixture.fragment.switchToVideoPlayer(false);
             if (pause) {
                 // The notification's play/pause action uses this production transport method.
                 fixture.player.playPause();
@@ -1039,6 +1262,56 @@ public class VideoSwipeActionsTest {
             return (PlayQueue) readField(fragment, "playQueue");
         }
 
+        void requestExplicitPlayback() {
+            final String key = context.getString(R.string.start_main_player_fullscreen_key);
+            final boolean had = prefs.contains(key);
+            final boolean old = prefs.getBoolean(key, false);
+            try {
+                prefs.edit().putBoolean(key, false).commit();
+                final View thumbnail = new View(activity);
+                thumbnail.setId(R.id.detail_thumbnail_root_layout);
+                fragment.onClick(thumbnail);
+            } finally {
+                final var editor = prefs.edit();
+                if (had) editor.putBoolean(key, old); else editor.remove(key);
+                editor.commit();
+            }
+        }
+
+        void prepareColdQueue(final String... names) {
+            final Object worker = readField(fragment, "currentWorker");
+            if (worker != null) ((io.reactivex.rxjava3.disposables.Disposable) worker).dispose();
+            writeField(fragment, "currentWorker", null);
+            writeField(fragment, "url", null);
+            writeField(fragment, "currentInfo", null);
+            final PlayQueue queue = new org.schabi.newpipe.player.playqueue.SinglePlayQueue(info(names[0]));
+            for (int i = 1; i < names.length; i++) {
+                queue.append(org.schabi.newpipe.player.mediaitem.PlayerMediaItem.forQueueItem(info(names[i])));
+            }
+            writeField(fragment, "playQueue", queue);
+        }
+
+        void setPlayerMetadata(final org.schabi.newpipe.player.mediaitem.PlayerMediaItem item) {
+            writeField(readField(player, "metadataController"), "currentMetadata", item);
+        }
+
+        void deliverPlayerMetadata(final org.schabi.newpipe.player.mediaitem.PlayerMediaItem item) {
+            writeField(readField(player, "listeners"), "fragmentListener", fragment);
+            final var eventPlayer = (com.google.android.exoplayer2.Player)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                            com.google.android.exoplayer2.Player.class.getClassLoader(),
+                            new Class<?>[]{com.google.android.exoplayer2.Player.class},
+                            (proxy, method, args) -> {
+                                if (method.getName().equals("getCurrentMediaItem")) {
+                                    return org.schabi.newpipe.player.mediaitem.ExoMediaItems.asExoMediaItem(item);
+                                }
+                                throw new AssertionError("Unexpected Exo call: " + method.getName());
+                            });
+            ((org.schabi.newpipe.player.PlayerMetadataController) readField(player, "metadataController"))
+                    .onEvents(eventPlayer, new com.google.android.exoplayer2.Player.Events(
+                            new com.google.android.exoplayer2.util.FlagSet.Builder().build()));
+        }
+
         void complete(final org.schabi.newpipe.extractor.stream.StreamInfo info,
                       final long generation) {
             try {
@@ -1096,6 +1369,7 @@ public class VideoSwipeActionsTest {
                         org.schabi.newpipe.extractor.InfoItem.InfoType.STREAM);
             }
             if (player != null) {
+                player.removeFragmentListener(fragment);
                 player.getAudioReactor().dispose();
                 player.getPersistentQueueController().close();
                 ((org.schabi.newpipe.player.SponsorBlockController)
