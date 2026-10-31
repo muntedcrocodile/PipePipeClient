@@ -1106,11 +1106,7 @@ public final class VideoDetailFragment
                         }
                     }
 
-                    if (pendingVideoOpen) {
-                        final boolean fullscreen = pendingVideoFullscreen;
-                        pendingVideoOpen = false;
-                        openVideoPlayer(fullscreen);
-                    } else if (isAutoplayEnabled()) {
+                    if (!openPendingVideoPlayer() && isAutoplayEnabled()) {
                         openVideoPlayerAutoFullscreen();
                     }
                 }, throwable -> showError(new ErrorInfo(throwable, UserAction.REQUESTED_STREAM,
@@ -1521,6 +1517,16 @@ public final class VideoDetailFragment
         }
 
         openMainPlayer();
+    }
+
+    private boolean openPendingVideoPlayer() {
+        if (!pendingVideoOpen || currentInfo == null || activity == null || binding == null) {
+            return false;
+        }
+        final boolean fullscreen = pendingVideoFullscreen;
+        pendingVideoOpen = false;
+        openVideoPlayer(fullscreen);
+        return true;
     }
 
     /**
@@ -2331,12 +2337,18 @@ public final class VideoDetailFragment
 
         updateOverlayData(info.getName(), info.getUploaderName(), info.getThumbnailUrl());
         if (currentInfo != null && info.getUrl().equals(currentInfo.getUrl())) {
+            openPendingVideoPlayer();
             return;
         }
 
         currentInfo = info;
         setInitialData(info.getServiceId(), info.getUrl(), info.getName(), queue);
-        setAutoPlay(false);
+        // A cold first-enqueue can receive metadata from the player listener instead of
+        // runWorker(). Do not discard its explicit pending open/play request in that path.
+        if (!pendingVideoOpen) {
+            setAutoPlay(false);
+        }
+        openPendingVideoPlayer();
         // Delay execution just because it freezes the main thread, and while playing
         // next/previous video you see visual glitches
         // (when non-vertical video goes after vertical video)
