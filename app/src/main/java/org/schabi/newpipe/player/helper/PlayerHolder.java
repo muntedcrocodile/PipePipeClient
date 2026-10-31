@@ -70,6 +70,11 @@ public final class PlayerHolder {
         return player.isPlaying();
     }
 
+    /** Preserve the requested play state while a source is still buffering. */
+    public boolean isPlaybackRequested() {
+        return player != null && player.getPlayWhenReady();
+    }
+
     public boolean isPlayerOpen() {
         return player != null;
     }

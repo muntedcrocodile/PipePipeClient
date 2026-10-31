@@ -391,21 +391,8 @@ public final class NavigationHelper {
                                                @Nullable final PlayQueue playQueue,
                                                final boolean switchingPlayers) {
 
-        final boolean autoPlay;
+        final boolean autoPlay = shouldAutoplayMainPlayer(context, switchingPlayers);
         @Nullable final PlayerService.PlayerType playerType = PlayerHolder.getInstance().getType();
-        if (!PlayerHolder.getInstance().isPlayerOpen()) {
-            // no player open
-            autoPlay = PlayerHelper.isAutoplayAllowedByUser(context);
-        } else if (switchingPlayers) {
-            // switching player to main player
-            autoPlay = PlayerHolder.getInstance().isPlaying(); // keep play/pause state
-        } else if (playerType == PlayerService.PlayerType.VIDEO) {
-            // opening new stream while already playing in main player
-            autoPlay = PlayerHelper.isAutoplayAllowedByUser(context);
-        } else {
-            // opening new stream while already playing in another player
-            autoPlay = false;
-        }
 
         final RunnableWithVideoDetailFragment onVideoDetailFragmentReady = (detailFragment,
                                                                             loadVideo) -> {
@@ -435,6 +422,25 @@ public final class NavigationHelper {
                     .replace(R.id.fragment_player_holder, instance)
                     .runOnCommit(() -> onVideoDetailFragmentReady.run(instance, false))
                     .commit();
+        }
+    }
+
+    private static boolean shouldAutoplayMainPlayer(final Context context,
+                                                    final boolean switchingPlayers) {
+        @Nullable final PlayerService.PlayerType playerType = PlayerHolder.getInstance().getType();
+        if (!PlayerHolder.getInstance().isPlayerOpen()) {
+            // no player open
+            return PlayerHelper.isAutoplayAllowedByUser(context);
+        } else if (switchingPlayers) {
+            // A newly enqueued source may not be ready yet. Preserve its requested state
+            // instead of interpreting buffering as a user pause and stopping the service.
+            return PlayerHolder.getInstance().isPlaybackRequested();
+        } else if (playerType == PlayerService.PlayerType.VIDEO) {
+            // opening new stream while already playing in main player
+            return PlayerHelper.isAutoplayAllowedByUser(context);
+        } else {
+            // opening new stream while already playing in another player
+            return false;
         }
     }
 
