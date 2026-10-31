@@ -80,6 +80,41 @@ public class PersistentPlayQueueTest {
     }
 
     @Test
+    public void mainPlayerSwitchKeepsRequestedPlaybackWhileSourceIsNotReady() {
+        queue.append(item("A"));
+        withPreparedPlayer(player -> {
+            final var holder = org.schabi.newpipe.player.helper.PlayerHolder.getInstance();
+            try {
+                final var field = holder.getClass().getDeclaredField("player");
+                field.setAccessible(true);
+                final Object previous = field.get(holder);
+                final var policy = org.schabi.newpipe.util.NavigationHelper.class
+                        .getDeclaredMethod("shouldAutoplayMainPlayer", Context.class, boolean.class);
+                policy.setAccessible(true);
+                final var exoField = Player.class.getDeclaredField("simpleExoPlayer");
+                exoField.setAccessible(true);
+                final var exo = (com.google.android.exoplayer2.ExoPlayer) exoField.get(player);
+                exo.stop(); // No ready source yet, just like first-enqueue navigation.
+                try {
+                    field.set(holder, player);
+                    exo.setPlayWhenReady(true);
+                    assertFalse("Requested playback is not decoded playback yet", player.isPlaying());
+                    assertTrue(player.getPlayWhenReady());
+                    assertEquals(Boolean.TRUE, policy.invoke(null, context, true));
+                    exo.pause();
+                    assertFalse(player.getPlayWhenReady());
+                    assertEquals("An intentional pause must survive the same switch",
+                            Boolean.FALSE, policy.invoke(null, context, true));
+                } finally {
+                    field.set(holder, previous);
+                }
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+        });
+    }
+
+    @Test
     public void acknowledgedDuplicateProgressAndSelectionSurviveFileReopen() {
         queue.append(Arrays.asList(item("A"), item("A"), item("C")));
         final String first = queue.getItem(0).getUuid();
