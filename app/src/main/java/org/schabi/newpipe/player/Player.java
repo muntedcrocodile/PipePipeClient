@@ -1500,6 +1500,12 @@ public final class Player {
         return !exoPlayerIsNull() && simpleExoPlayer.getPlayWhenReady();
     }
 
+    /** Last actual transport change for this occurrence, independent of source readiness. */
+    @Nullable
+    public String getPlayWhenReadyChangeToken(@Nullable final String occurrenceId) {
+        return playbackStateController.getPlayWhenReadyChangeToken(occurrenceId);
+    }
+
     boolean isLoading() {
         return !exoPlayerIsNull() && simpleExoPlayer.isLoading();
     }
