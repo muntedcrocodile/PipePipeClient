@@ -35,6 +35,7 @@ class PlayerPlaybackStateController(private val player: Player) {
         } else {
             player.simpleExoPlayer.playbackState
         }
+        if (!playWhenReady) player.persistentQueueController.checkpoint()
         updatePlaybackState(playWhenReady, playbackState)
     }
 
@@ -95,6 +96,10 @@ class PlayerPlaybackStateController(private val player: Player) {
             }
 
             com.google.android.exoplayer2.Player.STATE_ENDED -> { // 4
+                if (player.isPersistentQueueMode) {
+                    player.persistentQueueController.consume(true)
+                    return
+                }
                 changeState(PlayerPlaybackState.COMPLETED)
                 player.saveStreamProgressStateCompleted()
                 player.isPrepared = false
@@ -404,12 +409,16 @@ class PlayerPlaybackStateController(private val player: Player) {
             return
         }
 
-        if (!showQueueButtons || playQueue.index > 0) {
+        val showPrevious = QueuePlaybackPolicy.showPrevious(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
+        val showNext = QueuePlaybackPolicy.showNext(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
+        if (!showQueueButtons || showPrevious) {
             player.binding.playPreviousButton.animate(
                 showQueueButtons, duration.toLong(), AnimationType.SCALE_AND_ALPHA
             )
         }
-        if (!showQueueButtons || playQueue.index + 1 < playQueue.streams.size) {
+        if (!showQueueButtons || showNext) {
             player.binding.playNextButton.animate(
                 showQueueButtons, duration.toLong(), AnimationType.SCALE_AND_ALPHA
             )

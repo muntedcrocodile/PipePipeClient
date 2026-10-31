@@ -60,6 +60,8 @@ public final class PlayQueueActivity extends AppCompatActivity
     private ItemTouchHelper itemTouchHelper;
 
     private Menu menu;
+    private final io.reactivex.rxjava3.disposables.CompositeDisposable queueOperations =
+            new io.reactivex.rxjava3.disposables.CompositeDisposable();
 
     ////////////////////////////////////////////////////////////////////////////
     // Activity Lifecycle
@@ -90,6 +92,9 @@ public final class PlayQueueActivity extends AppCompatActivity
         this.menu = m;
         getMenuInflater().inflate(R.menu.menu_play_queue, m);
         getMenuInflater().inflate(R.menu.menu_play_queue_bg, m);
+        if (org.schabi.newpipe.player.playqueue.PersistentQueueManager.isEnabled(this)) {
+            m.add(0, R.id.queue_view_clear, 10, R.string.queue_view_clear);
+        }
         onMaybeMuteChanged();
         // to avoid null reference
         if (player != null) {
@@ -114,6 +119,10 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     @Override
     public boolean onOptionsItemSelected(final MenuItem item) {
+        if (item.getItemId() == R.id.queue_view_clear) {
+            org.schabi.newpipe.player.playqueue.QueueViewActions.clear(this, player);
+            return true;
+        }
         if (item.getItemId() == android.R.id.home) {
             finish();
             return true;
@@ -121,7 +130,15 @@ public final class PlayQueueActivity extends AppCompatActivity
             NavigationHelper.openSettings(this);
             return true;
         } else if (item.getItemId() == R.id.action_append_playlist) {
-            player.onAddToPlaylistClicked(getSupportFragmentManager());
+            if (player.getPlayQueue() instanceof
+                    org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+                queueOperations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                        this, getSupportFragmentManager(),
+                        (org.schabi.newpipe.player.playqueue.PersistentPlayQueue) player.getPlayQueue(),
+                        false));
+            } else {
+                player.onAddToPlaylistClicked(getSupportFragmentManager());
+            }
             return true;
         } else if (item.getItemId() == R.id.action_playback_speed) {
             openPlaybackParameterDialog();
@@ -153,7 +170,27 @@ public final class PlayQueueActivity extends AppCompatActivity
     }
 
     @Override
+    protected void onNewIntent(final Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        consumeShuffleRequest();
+    }
+
+    private void consumeShuffleRequest() {
+        if (player == null || !(player.getPlayQueue() instanceof
+                org.schabi.newpipe.player.playqueue.PersistentPlayQueue)
+                || !getIntent().getBooleanExtra("persistent_queue_shuffle_requested", false)) {
+            return;
+        }
+        getIntent().removeExtra("persistent_queue_shuffle_requested");
+        queueOperations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                this, getSupportFragmentManager(),
+                (org.schabi.newpipe.player.playqueue.PersistentPlayQueue) player.getPlayQueue(), true));
+    }
+
+    @Override
     protected void onDestroy() {
+        queueOperations.clear();
         super.onDestroy();
         unbind();
     }
@@ -218,6 +255,7 @@ public final class PlayQueueActivity extends AppCompatActivity
                     finish();
                 } else {
                     buildComponents();
+                    consumeShuffleRequest();
                     if (player != null) {
                         player.setActivityListener(PlayQueueActivity.this);
                     }
@@ -249,6 +287,8 @@ public final class PlayQueueActivity extends AppCompatActivity
         itemTouchHelper.attachToRecyclerView(queueControlBinding.playQueue);
 
         player.getPlayQueueAdapter().setSelectedListener(getOnSelectedListener());
+        player.getPlayQueueAdapter().showHistory(this,
+                org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player));
     }
 
     private void buildMetadata() {
@@ -263,6 +303,9 @@ public final class PlayQueueActivity extends AppCompatActivity
     }
 
     private void buildControls() {
+        queueControlBinding.controlRepeat.setVisibility(
+                player.getPlayQueue() instanceof org.schabi.newpipe.player.playqueue.PersistentPlayQueue
+                        ? View.GONE : View.VISIBLE);
         queueControlBinding.controlRepeat.setOnClickListener(this);
         queueControlBinding.controlBackward.setOnClickListener(this);
         queueControlBinding.controlFastRewind.setOnClickListener(this);
@@ -295,14 +338,18 @@ public final class PlayQueueActivity extends AppCompatActivity
             @Override
             public void onMove(final int sourceIndex, final int targetIndex) {
                 if (player != null) {
-                    player.getPlayQueue().move(sourceIndex, targetIndex);
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.edit(
+                            PlayQueueActivity.this,
+                            () -> player.getPlayQueue().move(sourceIndex, targetIndex));
                 }
             }
 
             @Override
             public void onSwiped(final int index) {
                 if (index != -1) {
-                    player.getPlayQueue().remove(index);
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.remove(
+                            PlayQueueActivity.this, player.getPlayQueue(), index);
+                    player.getPlayQueueAdapter().notifyDataSetChanged();
                 }
             }
         };
@@ -327,7 +374,8 @@ public final class PlayQueueActivity extends AppCompatActivity
 
             @Override
             public void onStartDrag(final PlayQueueItemHolder viewHolder) {
-                if (itemTouchHelper != null) {
+                if (itemTouchHelper != null && player.getPlayQueueAdapter()
+                        .canDrag(viewHolder.getBindingAdapterPosition())) {
                     itemTouchHelper.startDrag(viewHolder);
                 }
             }
@@ -380,7 +428,15 @@ public final class PlayQueueActivity extends AppCompatActivity
         } else if (view.getId() == queueControlBinding.controlForward.getId()) {
             player.playNext();
         } else if (view.getId() == queueControlBinding.controlShuffle.getId()) {
-            player.onShuffleClicked();
+            if (player.getPlayQueue() instanceof
+                    org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+                queueOperations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                        this, getSupportFragmentManager(),
+                        (org.schabi.newpipe.player.playqueue.PersistentPlayQueue) player.getPlayQueue(),
+                        true));
+            } else {
+                player.onShuffleClicked();
+            }
         } else if (view.getId() == queueControlBinding.metadata.getId()) {
             scrollToSelected();
         } else if (view.getId() == queueControlBinding.liveSync.getId()) {
@@ -589,6 +645,9 @@ public final class PlayQueueActivity extends AppCompatActivity
         if (maybeNewAdapter != null
                 && queueControlBinding.playQueue.getAdapter() != maybeNewAdapter) {
             queueControlBinding.playQueue.setAdapter(maybeNewAdapter);
+            maybeNewAdapter.setSelectedListener(getOnSelectedListener());
+            maybeNewAdapter.showHistory(this,
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player));
         }
     }
 

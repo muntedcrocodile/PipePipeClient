@@ -32,6 +32,7 @@ class PlayerQueueController(private val player: Player) {
     private var segmentsAdapter: StreamSegmentAdapter? = null
     private var itemTouchHelper: ItemTouchHelper? = null
 
+    private val operations = io.reactivex.rxjava3.disposables.CompositeDisposable()
     private var queueVisible = false
     private var segmentsVisible = false
 
@@ -39,10 +40,13 @@ class PlayerQueueController(private val player: Player) {
         val playQueue = player.playQueue ?: return
         queueAdapter?.dispose()
         queueAdapter = PlayQueueAdapter(player.context, playQueue)
+        queueAdapter?.showHistory(player.context,
+            org.schabi.newpipe.player.playqueue.QueueViewActions.historyListener(player))
         segmentsAdapter = StreamSegmentAdapter(getStreamSegmentListener())
     }
 
     fun disposeAdapters() {
+        operations.clear()
         queueAdapter?.let {
             it.unsetSelectedListener()
             it.dispose()
@@ -86,7 +90,31 @@ class PlayerQueueController(private val player: Player) {
         player.binding.itemsListHeaderTitle.visibility = View.GONE
         player.binding.itemsListHeaderDuration.visibility = View.VISIBLE
         player.binding.shuffleButton.visibility = View.VISIBLE
-        player.binding.repeatButton.visibility = View.VISIBLE
+        player.binding.repeatButton.visibility = if (player.playQueue is
+            org.schabi.newpipe.player.playqueue.PersistentPlayQueue) View.GONE else View.VISIBLE
+        if (player.playQueue is org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+            player.binding.shuffleButton.setOnClickListener {
+                player.parentActivity?.let { activity ->
+                    operations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                        activity, activity.supportFragmentManager,
+                        player.playQueue as org.schabi.newpipe.player.playqueue.PersistentPlayQueue,
+                        true))
+                }
+            }
+            player.binding.addToPlaylistButton.setOnClickListener {
+                player.parentActivity?.let { activity ->
+                    operations.add(org.schabi.newpipe.player.playqueue.QueueViewActions.materialize(
+                        activity, activity.supportFragmentManager,
+                        player.playQueue as org.schabi.newpipe.player.playqueue.PersistentPlayQueue,
+                        false))
+                }
+            }
+        } else {
+            player.binding.shuffleButton.setOnClickListener { player.onShuffleClicked() }
+            player.binding.addToPlaylistButton.setOnClickListener {
+                player.parentActivity?.let { player.onAddToPlaylistClicked(it.supportFragmentManager) }
+            }
+        }
         player.binding.addToPlaylistButton.visibility = View.VISIBLE
 
         player.hideControls(0L, 0L)
@@ -244,12 +272,17 @@ class PlayerQueueController(private val player: Player) {
 
     private fun getItemTouchCallback() = object : PlayQueueItemTouchCallback() {
         override fun onMove(sourceIndex: Int, targetIndex: Int) {
-            player.playQueue?.move(sourceIndex, targetIndex)
+            org.schabi.newpipe.player.playqueue.QueueViewActions.edit(player.context) {
+                player.playQueue?.move(sourceIndex, targetIndex)
+            }
         }
 
         override fun onSwiped(index: Int) {
             if (index != -1) {
-                player.playQueue?.remove(index)
+                player.playQueue?.let {
+                    org.schabi.newpipe.player.playqueue.QueueViewActions.remove(player.context, it, index)
+                }
+                queueAdapter?.notifyDataSetChanged()
             }
         }
     }
@@ -270,7 +303,9 @@ class PlayerQueueController(private val player: Player) {
         }
 
         override fun onStartDrag(viewHolder: PlayQueueItemHolder) {
-            itemTouchHelper?.startDrag(viewHolder)
+            if (queueAdapter?.canDrag(viewHolder.bindingAdapterPosition) == true) {
+                itemTouchHelper?.startDrag(viewHolder)
+            }
         }
     }
 }

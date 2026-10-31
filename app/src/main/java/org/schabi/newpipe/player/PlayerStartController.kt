@@ -2,6 +2,9 @@ package org.schabi.newpipe.player
 
 import android.content.Intent
 import android.view.View
+import android.widget.Toast
+import org.schabi.newpipe.player.playqueue.PersistentQueueManager
+import org.schabi.newpipe.player.playqueue.PersistentPlayQueue
 import com.google.android.exoplayer2.C
 import org.schabi.newpipe.R
 import org.schabi.newpipe.player.helper.PlayerHelper
@@ -28,29 +31,64 @@ class PlayerStartController(private val player: Player) {
         }
         // fail fast if no play queue was provided
         val queueCache = intent.getStringExtra(PlayerIntentConstants.PLAY_QUEUE_KEY) ?: return
-        val newQueue = SerializedCache.getInstance().take(queueCache, PlayQueue::class.java)
+        var newQueue = SerializedCache.getInstance().take(queueCache, PlayQueue::class.java)
             ?: return
 
+        val enqueue = intent.getBooleanExtra(PlayerIntentConstants.ENQUEUE, false)
+        val enqueueNext = intent.getBooleanExtra(PlayerIntentConstants.ENQUEUE_NEXT, false)
+        val building = enqueue || enqueueNext
+        var firstEnqueue = building && (player.playQueue == null || player.playQueue!!.isEmpty)
         val oldPlayerType = player.playerType
-        player.setPlayerType(PlayerHelper.retrievePlayerTypeFromIntent(intent))
+        if (player.isPersistentQueueMode) {
+            if (!player.persistentQueueController.checkpoint()) return
+            val owner = PersistentQueueManager.getInstance(player.context)
+            firstEnqueue = building && !QueuePlaybackPolicy.hasUnfinished(
+                owner.queue.isEmpty, owner.queue.isComplete)
+            try {
+                newQueue = when {
+                    building -> owner.enqueue(newQueue, enqueueNext)
+                    newQueue is PersistentPlayQueue -> owner.queue
+                    else -> owner.playNow(newQueue)
+                }
+            } catch (error: Exception) {
+                player.persistentQueueController.failure(error)
+                return
+            }
+            player.persistentQueueController.resumeHead(newQueue as PersistentPlayQueue)
+            if (!intent.getBooleanExtra(PersistentQueuePlayerController.HISTORY_REPLAY, false)
+                && !building) player.persistentQueueController.newSelection()
+            if (building) {
+                Toast.makeText(player.context,
+                    if (enqueueNext) R.string.enqueued_next else R.string.enqueued,
+                    Toast.LENGTH_SHORT).show()
+                if (player.playQueue === newQueue && !player.exoPlayerIsNull()) return
+                // A closed but unfinished persistent queue restores paused for queue building.
+                intent.putExtra(PlayerIntentConstants.PLAY_WHEN_READY,
+                    QueuePlaybackPolicy.enqueueReady(firstEnqueue, false, false))
+            }
+        }
+        player.setPlayerType(if (firstEnqueue) PlayerService.PlayerType.VIDEO
+            else if (building && player.playQueue != null) oldPlayerType
+            else PlayerHelper.retrievePlayerTypeFromIntent(intent))
         // We need to setup audioOnly before super(), see "sourceOf"
         player.setAudioOnly(player.audioPlayerSelected())
 
         val playQueue = player.playQueue
 
         // Resolve enqueue intents
-        if (intent.getBooleanExtra(PlayerIntentConstants.ENQUEUE, false) && playQueue != null) {
+        if (!player.isPersistentQueueMode && enqueue && playQueue != null) {
             playQueue.append(newQueue.streams)
             return
 
             // Resolve enqueue next intents
-        } else if (intent.getBooleanExtra(
-                PlayerIntentConstants.ENQUEUE_NEXT, false
-            ) && playQueue != null
+        } else if (!player.isPersistentQueueMode && enqueueNext && playQueue != null
         ) {
             val currentIndex = playQueue.index
+            val oldSize = playQueue.size()
             playQueue.append(newQueue.streams)
-            playQueue.move(playQueue.size() - 1, currentIndex + 1)
+            newQueue.streams.indices.forEach { offset ->
+                playQueue.move(oldSize + offset, currentIndex + 1 + offset)
+            }
             return
         }
 
@@ -98,7 +136,7 @@ class PlayerStartController(private val player: Player) {
          *  task and requires network calls
          * */
         // seek to timestamp if stream is already playing
-        if (!player.exoPlayerIsNull()
+        if (!player.isPersistentQueueMode && !player.exoPlayerIsNull()
             && newQueue.size() == 1 && newQueue.getItem() != null
             && playQueue != null && playQueue.size() == 1 && playQueue.getItem() != null
             && newQueue.getItem()!!.url == playQueue.getItem()!!.url
@@ -132,7 +170,8 @@ class PlayerStartController(private val player: Player) {
                 player.simpleExoPlayer.prepare()
             }
             player.simpleExoPlayer.setPlayWhenReady(playWhenReady)
-        } else if (intent.getBooleanExtra(PlayerIntentConstants.RESUME_PLAYBACK, false)
+        } else if (!player.isPersistentQueueMode
+            && intent.getBooleanExtra(PlayerIntentConstants.RESUME_PLAYBACK, false)
             && PlayerHelper.isPlaybackResumeEnabled(player)
             && !samePlayQueue
             && !newQueue.isEmpty()
@@ -188,6 +227,7 @@ class PlayerStartController(private val player: Player) {
             }
         }
         NavigationHelper.sendPlayerStartedEvent(player.context)
+        if (firstEnqueue) NavigationHelper.playOnMainPlayer(player.context, newQueue, true)
     }
 
     private fun initPlayback(
@@ -204,6 +244,7 @@ class PlayerStartController(private val player: Player) {
         player.initPlayer(playOnReady)
 
         player.playQueue = queue
+        player.persistentQueueController.attachQueue()
         queue.init()
         player.reloadPlayQueueManager()
         PlaybackStartupTrace.mark(player.startupTraceId, "media_source_manager_ready")

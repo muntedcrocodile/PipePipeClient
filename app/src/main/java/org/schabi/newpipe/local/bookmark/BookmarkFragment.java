@@ -127,6 +127,7 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
         super.onResume();
         if (activity != null) {
             setTitle(activity.getString(R.string.tab_bookmarks));
+            updateQueueLink();
         }
     }
 
@@ -139,6 +140,7 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
         super.initViews(rootView, savedInstanceState);
 
         itemListAdapter.setUseItemHandle(true);
+        updateQueueLink();
     }
 
     @Override
@@ -195,6 +197,31 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
     protected boolean forceUseListLayout() {
         final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity);
         return prefs.getBoolean(getString(R.string.always_list_mode_for_bookmark_key), false);
+    }
+
+    private boolean showQueueLink() {
+        return org.schabi.newpipe.player.playqueue.PersistentQueueManager.isEnabled(requireContext())
+                && PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .getBoolean("persistent_queue_visible", true);
+    }
+
+    private void updateQueueLink() {
+        if (itemListAdapter == null) {
+            return;
+        }
+        if (!showQueueLink()) {
+            itemListAdapter.setHeader(null);
+            return;
+        }
+        final android.widget.TextView link = new android.widget.TextView(requireContext());
+        link.setText(R.string.queue_view_title);
+        final int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        link.setPadding(padding, padding, padding, padding);
+        link.setOnClickListener(view -> getFM().beginTransaction()
+                .replace(R.id.fragment_holder,
+                        new org.schabi.newpipe.local.playlist.PersistentQueueFragment())
+                .addToBackStack(null).commit());
+        itemListAdapter.setHeader(link);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -332,7 +359,8 @@ public final class BookmarkFragment extends BaseLocalListFragment<List<PlaylistL
 
         itemListAdapter.clearStreamItemList();
 
-        if (result.isEmpty()) {
+        updateQueueLink();
+        if (result.isEmpty() && !showQueueLink()) {
             showEmptyState();
             return;
         }

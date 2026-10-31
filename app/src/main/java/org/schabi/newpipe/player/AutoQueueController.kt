@@ -29,6 +29,7 @@ class AutoQueueController(private val player: Player) {
     }
 
     fun maybeAutoQueueNextStream(info: StreamInfo, forceEnqueue: Boolean) {
+        if (player.isPersistentQueueMode) return
         val playQueue = player.playQueue ?: return
 
         val partitions: List<StreamInfoItem> = info.partitions
@@ -79,6 +80,7 @@ class AutoQueueController(private val player: Player) {
      * @param streamInfo the current stream info, which must be a round-play stream
      */
     fun scheduleRoundPlayAutoQueue(streamInfo: StreamInfo) {
+        if (player.isPersistentQueueMode) return
         val timer = enqueueTimer
         if (timer == null || timer.isDone || timer.isCancelled) {
             enqueueTimer = executor.schedule(

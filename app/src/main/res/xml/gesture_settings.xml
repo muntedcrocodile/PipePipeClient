@@ -97,13 +97,74 @@
             app:iconSpaceReserved="false" />
 
     <ListPreference
-            android:defaultValue="delete"
-            android:entries="@array/local_playlist_swipe_action_entries"
-            android:entryValues="@array/local_playlist_swipe_action_values"
-            android:key="@string/local_playlist_swipe_action_key"
-            android:summary="%s"
-            android:title="@string/local_playlist_swipe_action_title"
-            app:singleLineTitle="false"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
+        android:defaultValue="delete"
+        android:entries="@array/local_playlist_swipe_action_entries"
+        android:entryValues="@array/local_playlist_swipe_action_values"
+        android:key="@string/local_playlist_swipe_action_key"
+        android:summary="%s"
+        android:title="@string/local_playlist_swipe_action_title"
+        app:singleLineTitle="false"
+        app:iconSpaceReserved="false"
+        app:useSimpleSummaryProvider="true" />
+
+    <SwitchPreferenceCompat
+        android:key="@string/video_swipe_enabled_key"
+        android:title="@string/video_swipe_title"
+        android:summary="@string/video_swipe_summary"
+        android:defaultValue="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_left_action_key"
+        android:title="@string/video_swipe_left_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="enqueue_next"
+        android:entries="@array/video_swipe_action_entries"
+        android:entryValues="@array/video_swipe_action_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_right_action_key"
+        android:title="@string/video_swipe_right_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="enqueue"
+        android:entries="@array/video_swipe_action_entries"
+        android:entryValues="@array/video_swipe_action_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_left_action_playlist_key"
+        android:title="@string/video_swipe_playlist_left_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_playlist_entries"
+        android:entryValues="@array/video_swipe_playlist_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_right_action_playlist_key"
+        android:title="@string/video_swipe_playlist_right_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_playlist_entries"
+        android:entryValues="@array/video_swipe_playlist_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_left_action_history_key"
+        android:title="@string/video_swipe_history_left_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_history_entries"
+        android:entryValues="@array/video_swipe_history_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/video_swipe_right_action_history_key"
+        android:title="@string/video_swipe_history_right_title"
+        android:dependency="@string/video_swipe_enabled_key"
+        android:defaultValue="inherit"
+        android:entries="@array/video_swipe_history_entries"
+        android:entryValues="@array/video_swipe_history_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
 </PreferenceScreen>

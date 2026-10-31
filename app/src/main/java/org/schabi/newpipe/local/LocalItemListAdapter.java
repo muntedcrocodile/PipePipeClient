@@ -313,6 +313,20 @@ public class LocalItemListAdapter extends RecyclerView.Adapter<RecyclerView.View
         return localItems;
     }
 
+    /** Resolve displayed list rows using the active filter and actual header offset. */
+    @Nullable
+    public LocalItem getSwipeItem(final int adapterPosition) {
+        final int index = adapterPosition - (header == null ? 0 : 1);
+        final List<LocalItem> items = getCurrentItemsList();
+        if (itemViewMode != ItemViewMode.LIST || useGridVariant
+                || index < 0 || index >= items.size()) {
+            return null;
+        }
+        final LocalItem item = items.get(index);
+        return item instanceof PlaylistStreamEntry || item instanceof StreamStatisticsEntry
+                ? item : null;
+    }
+
     public List<LocalItem> getCurrentItemsList() {
         return isFilterEnabled ? filteredItems : localItems;
     }

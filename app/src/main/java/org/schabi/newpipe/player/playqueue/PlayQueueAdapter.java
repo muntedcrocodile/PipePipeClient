@@ -5,6 +5,9 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
+import java.util.ArrayList;
+import java.util.Collections;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -53,6 +56,26 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
 
     private static final int ITEM_VIEW_TYPE_ID = 0;
     private static final int FOOTER_VIEW_TYPE_ID = 1;
+    private static final int HISTORY_HEADER = 2;
+    private static final int HISTORY_ITEM = 3;
+    private List<PlayerMediaItem> history = Collections.emptyList();
+    private PlayQueueItemBuilder.OnSelectedListener historyListener;
+
+    public boolean isQueuePosition(final int position) {
+        return position >= 0 && position < playQueue.size();
+    }
+
+    public boolean canDrag(final int position) {
+        return isQueuePosition(position)
+                && (!(playQueue instanceof PersistentPlayQueue) || position > 0);
+    }
+
+    public void setHistory(final List<PlayerMediaItem> items,
+                           final PlayQueueItemBuilder.OnSelectedListener listener) {
+        history = new ArrayList<>(items);
+        historyListener = listener;
+        notifyDataSetChanged();
+    }
 
     private final PlayQueueItemBuilder playQueueItemBuilder;
     private final PlayQueue playQueue;
@@ -60,6 +83,21 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
     private View footer = null;
 
     private Disposable playQueueReactor;
+    private Disposable historySubscription;
+    private QueueHistory historySource;
+
+    public void showHistory(final Context context,
+                            final PlayQueueItemBuilder.OnSelectedListener listener) {
+        if (!(playQueue instanceof PersistentPlayQueue)) {
+            return;
+        }
+        if (historySubscription != null) {
+            historySubscription.dispose();
+        }
+        historySource = QueueHistory.getInstance(context);
+        historySubscription = historySource.observe().subscribe(ignored ->
+                setHistory(historySource.excluding(playQueue.getItem()), listener));
+    }
 
     public PlayQueueAdapter(final Context context, final PlayQueue playQueue) {
         if (playQueue.getBroadcastReceiver() == null) {
@@ -101,6 +139,14 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
     }
 
     private void onPlayQueueChanged(final PlayQueueEvent message) {
+        if (historySource != null) {
+            if (message.type() == org.schabi.newpipe.player.playqueue.events.PlayQueueEventType.RECOVERY) {
+                return;
+            }
+            history = historySource.excluding(playQueue.getItem());
+            notifyDataSetChanged();
+            return;
+        }
         switch (message.type()) {
             case RECOVERY:
                 // Do nothing.
@@ -112,7 +158,8 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
                 break;
             case APPEND:
                 final AppendEvent appendEvent = (AppendEvent) message;
-                notifyItemRangeInserted(playQueue.size(), appendEvent.getAmount());
+                notifyItemRangeInserted(playQueue.size() - appendEvent.getAmount(),
+                        appendEvent.getAmount());
                 break;
             case ERROR:
                 final ErrorEvent errorEvent = (ErrorEvent) message;
@@ -137,6 +184,10 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
     }
 
     public void dispose() {
+        if (historySubscription != null) {
+            historySubscription.dispose();
+            historySubscription = null;
+        }
         if (playQueueReactor != null) {
             playQueueReactor.dispose();
         }
@@ -171,7 +222,7 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
         if (footer != null && showFooter) {
             count++;
         }
-        return count;
+        return count + (history.isEmpty() ? 0 : history.size() + 1);
     }
 
     @Override
@@ -180,7 +231,14 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
             return FOOTER_VIEW_TYPE_ID;
         }
 
+        if (position >= queueAndFooterSize() && !history.isEmpty()) {
+            return position == queueAndFooterSize() ? HISTORY_HEADER : HISTORY_ITEM;
+        }
         return ITEM_VIEW_TYPE_ID;
+    }
+
+    private int queueAndFooterSize() {
+        return playQueue.size() + (footer != null && showFooter ? 1 : 0);
     }
 
     @NonNull
@@ -190,6 +248,13 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
         switch (type) {
             case FOOTER_VIEW_TYPE_ID:
                 return new HFHolder(footer);
+            case HISTORY_HEADER:
+                final TextView label = new TextView(parent.getContext());
+                label.setText(R.string.queue_view_history);
+                final int padding = (int) (16 * parent.getResources().getDisplayMetrics().density);
+                label.setPadding(padding, padding, padding, padding);
+                return new HFHolder(label);
+            case HISTORY_ITEM:
             case ITEM_VIEW_TYPE_ID:
                 return new PlayQueueItemHolder(LayoutInflater.from(parent.getContext())
                         .inflate(R.layout.play_queue_item, parent, false));
@@ -205,6 +270,20 @@ public class PlayQueueAdapter extends RecyclerView.Adapter<RecyclerView.ViewHold
         if (holder instanceof PlayQueueItemHolder) {
             final PlayQueueItemHolder itemHolder = (PlayQueueItemHolder) holder;
 
+            if (getItemViewType(position) == HISTORY_ITEM) {
+                final PlayerMediaItem item = history.get(position - queueAndFooterSize() - 1);
+                playQueueItemBuilder.buildStreamInfoItem(itemHolder, item);
+                itemHolder.itemHandle.setVisibility(View.INVISIBLE);
+                itemHolder.itemRoot.setOnClickListener(view -> {
+                    if (historyListener != null) {
+                        historyListener.selected(item, view);
+                    }
+                });
+                itemHolder.itemRoot.setOnLongClickListener(null);
+                itemHolder.itemView.setSelected(false);
+                return;
+            }
+            itemHolder.itemHandle.setVisibility(canDrag(position) ? View.VISIBLE : View.INVISIBLE);
             // Build the list item
             playQueueItemBuilder
                     .buildStreamInfoItem(itemHolder, playQueue.getStreams().get(position));

@@ -1,5 +1,6 @@
 package org.schabi.newpipe.local.history;
 
+import org.schabi.newpipe.info_list.VideoSwipeActions;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.Parcelable;
@@ -180,6 +181,16 @@ public class StatisticsPlaylistFragment
     @Override
     protected void initListeners() {
         super.initListeners();
+        VideoSwipeActions.attach(this, itemsList, position -> {
+            final LocalItem item = selection.isActive() ? null : itemListAdapter.getSwipeItem(position);
+            if (!(item instanceof StreamStatisticsEntry)) {
+                return null;
+            }
+            return new VideoSwipeActions.Row(
+                    ((StreamStatisticsEntry) item).toStreamInfoItem(), null,
+                    () -> deleteEntry((StreamStatisticsEntry) item));
+        });
+
 
         itemListAdapter.setSelectedListener(new OnClickGesture<LocalItem>() {
             @Override

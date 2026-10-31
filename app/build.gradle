@@ -10,6 +10,11 @@ def keyPath = System.getenv("KEY_PATH")
 def keyStorePassword = System.getenv("KEY_STORE_PASSWORD")
 def signingKeyAlias = System.getenv("KEY_ALIAS")
 def signingKeyPassword = System.getenv("KEY_PASSWORD")
+def debugPackageSuffix = System.getProperty('debugPackageSuffix')
+if (debugPackageSuffix != null
+        && !(debugPackageSuffix ==~ /(?:\.[A-Za-z][A-Za-z0-9_]*)+/)) {
+    throw new GradleException('debugPackageSuffix must start with a dot and contain valid application ID segments')
+}
 def baseVersionCode = 1110
 def appVersionName = "5.5.0"
 def abiCodes = ['armeabi-v7a': 1, 'x86': 2, 'x86_64': 3, 'arm64-v8a': 4]
@@ -60,17 +65,9 @@ android {
         debug {
             debuggable true
 
-            // suffix the app id and the app name with git branch name
-            def workingBranch = getGitWorkingBranch()
-            def normalizedWorkingBranch = workingBranch.replaceFirst("^[^A-Za-z]+", "").replaceAll("[^0-9A-Za-z]+", "")
-            if (true) {
-                // default values when branch name could not be determined or is master or dev
-                applicationIdSuffix ".debug"
-                resValue "string", "app_name", "PipePipe Debug"
-            } else {
-                applicationIdSuffix ".debug." + normalizedWorkingBranch
-                resValue "string", "app_name", "PipePipe " + workingBranch
-            }
+            applicationIdSuffix debugPackageSuffix ?: ".debug"
+            resValue "string", "app_name", debugPackageSuffix == null
+                    ? "PipePipe Debug" : "PipePipe " + debugPackageSuffix
         }
 
         release {

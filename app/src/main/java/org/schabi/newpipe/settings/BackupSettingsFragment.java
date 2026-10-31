@@ -17,6 +17,8 @@ import androidx.core.content.ContextCompat;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceManager;
 import org.schabi.newpipe.NewPipeDatabase;
+import org.schabi.newpipe.player.helper.PlayerHolder;
+import org.schabi.newpipe.player.playqueue.PersistentQueueManager;
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.extractor.NewPipe;
@@ -222,9 +224,16 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
                 throw new IOException("Could not create databases dir");
             }
 
+            // Freeze the live owner before stopping the service: its final progress callback
+            // and in-flight remote pages must never write over the imported queue.
+            PersistentQueueManager.getInstance(requireContext()).prepareForImport();
+            PlayerHolder.getInstance().stopService();
+            NewPipeDatabase.close();
+
             if (!manager.extractDb(file)) {
                 Toast.makeText(getContext(), R.string.could_not_import_all_files, Toast.LENGTH_LONG)
                         .show();
+                finishImport(importDataUri);
                 return;
             }
 
@@ -250,6 +259,9 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
             }
         } catch (final Exception e) {
             ErrorUtil.showUiErrorSnackbar(this, "Importing database", e);
+            // Old writers were frozen before replacement. Reopen only in a fresh process,
+            // including after an unsuccessful import, rather than revive stale owners.
+            NavigationHelper.restartApp(requireActivity());
         }
     }
 

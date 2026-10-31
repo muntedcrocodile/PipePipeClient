@@ -1,0 +1,89 @@
+package org.schabi.newpipe.player
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class QueuePlaybackPolicyTest {
+    @Test fun persistentHeadKeepsBothTransportButtonsIncludingFinalOccurrence() {
+        assertTrue(QueuePlaybackPolicy.showPrevious(true, 0, 1))
+        assertTrue(QueuePlaybackPolicy.showNext(true, 0, 1))
+        assertFalse(QueuePlaybackPolicy.showPrevious(true, 0, 0))
+        assertFalse(QueuePlaybackPolicy.showNext(true, 0, 0))
+        assertFalse(QueuePlaybackPolicy.showPrevious(false, 0, 2))
+        assertTrue(QueuePlaybackPolicy.showNext(false, 0, 2))
+        assertTrue(QueuePlaybackPolicy.showPrevious(false, 1, 2))
+        assertFalse(QueuePlaybackPolicy.showNext(false, 1, 2))
+        val policy = QueuePlaybackPolicy<String> { it }
+        assertNull(policy.previous("current", emptyList())) // Recording off or depth zero: restart.
+        assertTrue(QueuePlaybackPolicy.showPrevious(true, 0, 1))
+    }
+
+    @Test fun tappingFailedCurrentOccurrenceRetainsExplicitRetryAndRebuildDecision() {
+        val policy = QueuePlaybackPolicy<String> { it }
+        policy.headChanged("failed-current")
+        policy.playbackFailed()
+        policy.resetPrevious() // Same occurrence selection must not clear failure.
+        policy.headChanged("failed-current")
+        assertTrue(policy.retryFailedHead()) // The bridge rebuilds the source on this decision.
+        assertFalse(policy.retryFailedHead()) // Repeated Play does not start a second rebuild.
+        assertTrue(QueuePlaybackPolicy.consumeCompletion("failed-current", "failed-current",
+            policy.failed, false))
+    }
+
+    @Test fun previousKeepsStableOrderAcrossReplayRecencyChanges() {
+        val policy = QueuePlaybackPolicy<String> { it }
+        assertEquals("B", policy.previous("C", listOf("C", "B", "A")))
+        policy.invalidateHistory(listOf("B", "C", "A"))
+        assertEquals("A", policy.previous("B", listOf("B", "C", "A")))
+        assertNull(policy.previous("A", listOf("A", "B", "C")))
+        policy.resetPrevious() // A forward transition permits a fresh history snapshot.
+        assertEquals("B", policy.previous("C", listOf("C", "B", "A")))
+    }
+
+    @Test fun historyDeletionAndDisabledHistoryInvalidateBackwardCandidates() {
+        val policy = QueuePlaybackPolicy<String> { it }
+        assertEquals("C", policy.previous("D", listOf("C", "B", "A")))
+        policy.invalidateHistory(listOf("C", "A")) // B was deleted.
+        assertEquals("A", policy.previous("C", listOf("C", "A")))
+        policy.resetPrevious()
+        assertEquals("C", policy.previous("D", listOf("C", "A")))
+        policy.invalidateHistory(emptyList()) // Recording off or depth zero.
+        assertNull(policy.previous("C", emptyList()))
+    }
+
+    @Test fun errorsStaleCompletionAndRemoteBoundariesNeverConsume() {
+        assertTrue(QueuePlaybackPolicy.consumeCompletion("A", "A", false, false))
+        assertFalse(QueuePlaybackPolicy.consumeCompletion("A", "B", false, false))
+        assertFalse(QueuePlaybackPolicy.consumeCompletion("A", "A", true, false))
+        assertFalse(QueuePlaybackPolicy.consumeCompletion("A", "A", false, true))
+        assertFalse(QueuePlaybackPolicy.consumeCompletion(null, null, false, false))
+    }
+
+    @Test fun nextAndHistoryReplayAfterFailureAllowNewHeadToComplete() {
+        for (nextHead in listOf("B", "previous-history-video")) {
+            val policy = QueuePlaybackPolicy<String> { it }
+            policy.headChanged("A")
+            policy.playbackFailed()
+            assertFalse(QueuePlaybackPolicy.consumeCompletion("A", "A", policy.failed, false))
+            policy.headChanged("A") // Ordinary refresh does not silently retry a failed head.
+            assertTrue(policy.failed)
+            policy.headChanged(nextHead) // Next or Previous introduces a different occurrence.
+            assertTrue(QueuePlaybackPolicy.consumeCompletion(nextHead, nextHead, policy.failed, false))
+        }
+    }
+
+    @Test fun pendingOnlyQueueRestoresPausedAndDoesNotCountAsFirstEnqueue() {
+        assertTrue(QueuePlaybackPolicy.hasUnfinished(empty = true, complete = false))
+        val firstEnqueue = !QueuePlaybackPolicy.hasUnfinished(empty = true, complete = false)
+        assertFalse(QueuePlaybackPolicy.enqueueReady(firstEnqueue, false, false))
+        assertFalse(QueuePlaybackPolicy.hasUnfinished(empty = true, complete = true))
+        assertTrue(QueuePlaybackPolicy.hasUnfinished(empty = false, complete = true))
+    }
+
+    @Test fun enqueueStartsOnlyEmptyQueueAndPreservesAttachedPlaybackReadiness() {
+        assertTrue(QueuePlaybackPolicy.enqueueReady(true, false, false))
+        assertFalse(QueuePlaybackPolicy.enqueueReady(false, false, true))
+        assertFalse(QueuePlaybackPolicy.enqueueReady(false, true, false))
+        assertTrue(QueuePlaybackPolicy.enqueueReady(false, true, true))
+    }
+}

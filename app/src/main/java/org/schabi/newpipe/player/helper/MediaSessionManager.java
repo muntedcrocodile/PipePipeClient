@@ -93,7 +93,7 @@ public class MediaSessionManager {
         sessionConnector.setQueueNavigator(queueNavigator);
         // previous/next are no longer advertised when seeking instead, so handle the keys here
         sessionConnector.setMediaButtonEventHandler((p, event) -> {
-            if (!PlayerHelper.getSeekInsteadOfSkip(context)) {
+            if (callback.isPersistentQueueMode() || !PlayerHelper.getSeekInsteadOfSkip(context)) {
                 return false;
             }
             final KeyEvent key = event.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
@@ -214,7 +214,7 @@ public class MediaSessionManager {
             @Nullable
             @Override
             public PlaybackStateCompat.CustomAction getCustomAction(final Player player) {
-                if (!PlayerHelper.getSeekInsteadOfSkip(context)) {
+                if (callback.isPersistentQueueMode() || !PlayerHelper.getSeekInsteadOfSkip(context)) {
                     return null;
                 }
                 return new PlaybackStateCompat.CustomAction.Builder(actionName, label, icon)

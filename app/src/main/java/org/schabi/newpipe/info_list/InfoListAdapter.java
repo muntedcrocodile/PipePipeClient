@@ -336,6 +336,18 @@ public class InfoListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         return isSorted() ? sortedItemList : infoItemList;
     }
 
+    /** Returns only video list rows; headers, cards, grids and other tiles cannot swipe. */
+    @Nullable
+    public StreamInfoItem getSwipeItem(final int adapterPosition) {
+        final int index = adapterPosition - (hasHeader() ? 1 : 0);
+        final List<InfoItem> displayed = shownList();
+        if (itemMode != ItemViewMode.LIST || index < 0 || index >= displayed.size()) {
+            return null;
+        }
+        final InfoItem item = displayed.get(index);
+        return item instanceof StreamInfoItem ? (StreamInfoItem) item : null;
+    }
+
     @Override
     public int getItemCount() {
         int count = shownList().size();

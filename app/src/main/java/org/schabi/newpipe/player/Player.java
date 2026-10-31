@@ -110,6 +110,7 @@ public final class Player {
 
     // play queue might be null e.g. while player is starting
     @Nullable private PlayQueue playQueue;
+    private final PersistentQueuePlayerController persistentQueueController;
 
     @Nullable private MediaSourceManager playQueueManager;
 
@@ -300,6 +301,7 @@ public final class Player {
         layoutController = new PlayerLayoutController(this);
         uiModeController = new PlayerUiModeController(this);
         metadataController = new PlayerMetadataController(this);
+        persistentQueueController = new PersistentQueuePlayerController(this);
     }
 
     //endregion
@@ -425,6 +427,7 @@ public final class Player {
             exoPlayerEventAdapter = null;
             simpleExoPlayer.stop();
             simpleExoPlayer.release();
+            simpleExoPlayer = null;
         }
         if (progressController.isProgressLoopRunning()) {
             progressController.stopProgressLoop();
@@ -449,7 +452,16 @@ public final class Player {
         dataSource.disconnectWebSocketClients();
     }
 
+    public boolean isPersistentQueueMode() {
+        return org.schabi.newpipe.player.playqueue.PersistentQueueManager.isEnabled(context);
+    }
+
+    public PersistentQueuePlayerController getPersistentQueueController() {
+        return persistentQueueController;
+    }
+
     public void destroy() {
+        persistentQueueController.close();
         if (DEBUG) {
             Log.d(TAG, "destroy() called");
         }
@@ -472,6 +484,10 @@ public final class Player {
     }
 
     public void setRecovery() {
+        if (playQueue instanceof org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+            persistentQueueController.checkpoint();
+            return;
+        }
         if (playQueue == null || exoPlayerIsNull()) {
             return;
         }
@@ -498,6 +514,9 @@ public final class Player {
     }
 
     void reloadPlayQueueManager() {
+        if (!persistentQueueController.checkpoint()) {
+            return;
+        }
         if (playQueueManager != null) {
             playQueueManager.dispose();
         }
@@ -531,8 +550,11 @@ public final class Player {
         }
 
         liveIdle = true;
-        // A live stream resumes at the live edge, not at the position it happened to be paused at.
-        if (playQueue != null) {
+        // Ordinary recovery is transient. Persistent occurrence progress remains owned by its
+        // checkpoint: pause cleanup must not issue another durable write after that write fails.
+        // Live sources ignore recovery when resumed, so retaining it cannot seek off the live edge.
+        if (playQueue != null && !(playQueue instanceof
+                org.schabi.newpipe.player.playqueue.PersistentPlayQueue)) {
             playQueue.unsetRecovery(playQueue.getIndex());
         }
         // The live chat extractor owns its own connection/poll and is not driven by ExoPlayer.
@@ -969,6 +991,11 @@ public final class Player {
             return;
         }
 
+        if (persistentQueueController.onDiscontinuity(oldPosition, newPosition,
+                discontinuityReason)) {
+            return;
+        }
+
         // Refresh the playback if there is a transition to the next video
         final int newIndex = newPosition.mediaItemIndex;
         switch (discontinuityReason) {
@@ -1066,6 +1093,9 @@ public final class Player {
     }
 
     public boolean shouldSeek() {
+        if (playQueue instanceof org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+            return true; // Occurrence recovery is independent of global-history resume preference.
+        }
         return !prefs.getBoolean(context.getString(R.string.always_start_from_beginning_key), false);
     }
 
@@ -1139,6 +1169,7 @@ public final class Player {
     }
 
     public void saveStreamProgressState() {
+        persistentQueueController.checkpoint();
         historyController.saveStreamProgressState();
     }
 
@@ -1188,14 +1219,18 @@ public final class Player {
     //////////////////////////////////////////////////////////////////////////*/
     //region Play queue, segments and streams
 
-    public void selectQueueItem(final PlayerMediaItem item) {
+    /** Returns whether the selection succeeded. Persistent failures are already reported. */
+    public boolean selectQueueItem(final PlayerMediaItem item) {
+        if (isPersistentQueueMode()) {
+            return persistentQueueController.select(item);
+        }
         if (playQueue == null || exoPlayerIsNull()) {
-            return;
+            return false;
         }
 
         final int index = playQueue.indexOf(item);
         if (index == -1) {
-            return;
+            return false;
         }
 
         if (playQueue.getIndex() == index && simpleExoPlayer.getCurrentMediaItemIndex() == index) {
@@ -1204,6 +1239,7 @@ public final class Player {
             saveStreamProgressState();
         }
         playQueue.setIndex(index);
+        return true;
     }
 
     void onPlayQueueEdited() {
@@ -1224,7 +1260,8 @@ public final class Player {
     MediaSource sourceOf(final PlayerMediaItem item, final StreamInfo info) {
         final long recoveryPosition = playQueue == null
                 ? PlayQueue.RECOVERY_UNSET : playQueue.getRecoveryPosition(item);
-        final long initialPositionMs = shouldSeek()
+        final long initialPositionMs = !StreamTypeUtil.isLiveStream(info.getStreamType())
+                && shouldSeek()
                 && recoveryPosition != PlayQueue.RECOVERY_UNSET
                 ? recoveryPosition : 0;
         return sourceResolver.resolve(playerType, isAudioOnly, info, initialPositionMs,

@@ -86,8 +86,17 @@ class PlayerErrorHandler(private val player: Player) {
     fun onPlayerError(error: PlaybackException) {
         Log.e(Player.TAG, "ExoPlayer - onPlayerError() called with:", error)
 
+        // A live-window failure must not persist a timestamp outside the current window.
         if (error.errorCode != ERROR_CODE_BEHIND_LIVE_WINDOW) {
             player.saveStreamProgressState()
+        }
+        if (player.isPersistentQueueMode) {
+            player.persistentQueueController.playbackFailed()
+            player.onBufferingFailed()
+            val playerError = toPlayerError(error)
+            createErrorNotification(playerError)
+            player.listeners.onPlayerError(playerError, false)
+            return
         }
         var isCatchableException = false
 

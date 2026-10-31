@@ -214,6 +214,9 @@ public class MainActivity extends AppCompatActivity {
             dialog1.setOnDismissListener(new DialogInterface.OnDismissListener() {
                 @Override
                 public void onDismiss(DialogInterface dialog) {
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
                     if((storedVersionCode / 100 < 1110 && currentTime - lastShowDonationTime > 14 * 24 * 60 * 60 * 1000)
                             || currentTime - lastShowDonationTime > 30L * 24 * 60 * 60 * 1000) {
                         prefs.edit().putLong("last_show_donation_time", currentTime).apply();
@@ -231,15 +234,7 @@ public class MainActivity extends AppCompatActivity {
                 AnnouncementParser.ParsedResult result = parseContentsBeforeId(resp.responseBody(), lastAnnouncementId);
                 if(result.latestId != null) {
                     Handler handler = new Handler(Looper.getMainLooper());
-                    handler.post(() -> {
-                        AlertDialog.Builder builder3 = new AlertDialog.Builder(this);
-                        builder3.setMessage(result.contents);
-                        builder3.setTitle(R.string.announcement);
-                        builder3.setPositiveButton(R.string.ok, (dialog, which) -> {
-                            prefs.edit().putString("last_announcement_id", result.latestId).apply();
-                        });
-                        builder3.show();
-                    });
+                    handler.post(() -> showAnnouncement(result.contents, result.latestId));
                 }
             });
         } catch (Exception ignore) {
@@ -260,6 +255,19 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putInt("isFirstRun", 1).apply();
             PermissionChecker.checkNotificationPermission(this);
         }
+    }
+
+    private void showAnnouncement(final String contents, final String latestId) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(contents);
+        builder.setTitle(R.string.announcement);
+        builder.setPositiveButton(R.string.ok, (dialog, which) ->
+                PreferenceManager.getDefaultSharedPreferences(this).edit()
+                        .putString("last_announcement_id", latestId).apply());
+        builder.show();
     }
 
     private void setupDrawer() throws ExtractionException {

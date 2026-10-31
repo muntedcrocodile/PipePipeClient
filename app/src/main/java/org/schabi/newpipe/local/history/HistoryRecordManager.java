@@ -62,6 +62,7 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 
 public class HistoryRecordManager {
+    private final Context applicationContext;
     private final AppDatabase database;
     private final StreamDAO streamTable;
     private static final int DELETE_BATCH_SIZE = 500;
@@ -73,7 +74,12 @@ public class HistoryRecordManager {
     private final String streamHistoryKey;
 
     public HistoryRecordManager(final Context context) {
-        database = NewPipeDatabase.getInstance(context);
+        this(context, NewPipeDatabase.getInstance(context));
+    }
+
+    HistoryRecordManager(final Context context, final AppDatabase database) {
+        applicationContext = context.getApplicationContext();
+        this.database = database;
         streamTable = database.streamDAO();
         streamHistoryTable = database.streamHistoryDAO();
         searchHistoryTable = database.searchHistoryDAO();
@@ -162,10 +168,13 @@ public class HistoryRecordManager {
     }
 
     public Completable deleteStreamHistoryAndState(final long streamId) {
-        return Completable.fromAction(() -> database.runInTransaction(() -> {
-            streamStateTable.deleteState(streamId);
-            streamHistoryTable.deleteStreamHistory(streamId);
-        })).subscribeOn(Schedulers.io());
+        return Completable.fromAction(() -> {
+            database.runInTransaction(() -> {
+                streamStateTable.deleteState(streamId);
+                streamHistoryTable.deleteStreamHistory(streamId);
+            });
+            clearQueueRecovery(streamId);
+        }).subscribeOn(Schedulers.io());
     }
 
     /**
@@ -174,24 +183,31 @@ public class HistoryRecordManager {
      */
     public Completable deleteStreamHistoryAndState(final Collection<Long> streamIds) {
         final List<Long> ids = new ArrayList<>(streamIds);
-        return Completable.fromAction(() -> database.runInTransaction(() -> {
-            // stay well below SQLite's bound-variable limit
-            for (int start = 0; start < ids.size(); start += DELETE_BATCH_SIZE) {
-                final List<Long> chunk =
-                        ids.subList(start, Math.min(start + DELETE_BATCH_SIZE, ids.size()));
-                streamStateTable.deleteStates(chunk);
-                streamHistoryTable.deleteStreamHistories(chunk);
+        return Completable.fromAction(() -> {
+            database.runInTransaction(() -> {
+                // Stay well below SQLite's bound-variable limit.
+                for (int start = 0; start < ids.size(); start += DELETE_BATCH_SIZE) {
+                    final List<Long> chunk =
+                            ids.subList(start, Math.min(start + DELETE_BATCH_SIZE, ids.size()));
+                    streamStateTable.deleteStates(chunk);
+                    streamHistoryTable.deleteStreamHistories(chunk);
+                }
+            });
+            for (final long streamId : ids) {
+                clearQueueRecovery(streamId);
             }
-        })).subscribeOn(Schedulers.io());
+        }).subscribeOn(Schedulers.io());
     }
 
     public Single<Integer> deleteWholeStreamHistory() {
         return Single.fromCallable(streamHistoryTable::deleteAll)
+                .doOnSuccess(count -> queueManager().getQueue().clearRecovery())
                 .subscribeOn(Schedulers.io());
     }
 
     public Single<Integer> deleteCompleteStreamStateHistory() {
         return Single.fromCallable(streamStateTable::deleteAll)
+                .doOnSuccess(count -> queueManager().getQueue().clearRecovery())
                 .subscribeOn(Schedulers.io());
     }
 
@@ -235,7 +251,28 @@ public class HistoryRecordManager {
             entities.add(entry.toStreamHistoryEntity());
         }
         return Single.fromCallable(() -> streamHistoryTable.delete(entities))
+                .doOnSuccess(count -> {
+                    for (final StreamHistoryEntry entry : entries) {
+                        final var stream = entry.getStreamEntity();
+                        queueManager().getQueue().clearRecovery(stream.getServiceId(), stream.getUrl());
+                    }
+                })
                 .subscribeOn(Schedulers.io());
+    }
+
+    private org.schabi.newpipe.player.playqueue.PersistentQueueManager queueManager() {
+        return org.schabi.newpipe.player.playqueue.PersistentQueueManager
+                .getInstance(applicationContext);
+    }
+
+    private void clearQueueRecovery(final long streamId) {
+        try (android.database.Cursor cursor = database.getOpenHelper().getReadableDatabase()
+                .query("SELECT service_id, url FROM streams WHERE uid = ?",
+                        new Object[]{streamId})) {
+            if (cursor.moveToFirst()) {
+                queueManager().getQueue().clearRecovery(cursor.getInt(0), cursor.getString(1));
+            }
+        }
     }
 
     private boolean isStreamHistoryEnabled() {
@@ -301,11 +338,17 @@ public class HistoryRecordManager {
 
     public Maybe<StreamStateEntity> loadStreamState(final PlayerMediaItem queueItem) {
         return ExtractorStreamInfoResolver.INSTANCE.streamOf(queueItem)
-                .map(info -> streamTable.upsert(new StreamEntity(info)))
-                .flatMapPublisher(streamStateTable::getState)
-                .firstElement()
-                .flatMap(list -> list.isEmpty() ? Maybe.empty() : Maybe.just(list.get(0)))
-                .filter(state -> state.isValid(queueItem.getDuration(), queueItem.isRoundPlayStream()))
+                .flatMapMaybe(this::loadStreamState)
+                .subscribeOn(Schedulers.io());
+    }
+
+    /** Uses the same resolved metadata for state validity and finished detection. */
+    public Maybe<Long> loadPlaybackResumePosition(final PlayerMediaItem queueItem) {
+        return ExtractorStreamInfoResolver.INSTANCE.streamOf(queueItem)
+                .flatMapMaybe(info -> loadStreamState(info)
+                        .filter(state -> info.getDuration() > 0
+                                && !state.isFinished(info.getDuration()))
+                        .map(StreamStateEntity::getProgressMillis))
                 .subscribeOn(Schedulers.io());
     }
 

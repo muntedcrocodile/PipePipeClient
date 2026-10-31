@@ -1,6 +1,7 @@
 package org.schabi.newpipe.fragments.list;
 
 import org.schabi.newpipe.extractor.utils.ServiceScopedId;
+import org.schabi.newpipe.info_list.VideoSwipeActions;
 import static org.schabi.newpipe.ktx.ViewUtils.animate;
 import static org.schabi.newpipe.ktx.ViewUtils.animateHideRecyclerViewAllowingScrolling;
 import static org.schabi.newpipe.util.ThemeHelper.getGridSpanCountStreams;
@@ -454,6 +455,10 @@ public abstract class BaseListFragment<I, N> extends BaseStateFragment<I>
                 }
             });
         }
+        VideoSwipeActions.attach(this, itemsList, position -> {
+            final StreamInfoItem item = selection.isActive() ? null : infoListAdapter.getSwipeItem(position);
+            return item == null ? null : new VideoSwipeActions.Row(item);
+        });
     }
 
     protected void onItemSelected(final InfoItem selectedItem) {

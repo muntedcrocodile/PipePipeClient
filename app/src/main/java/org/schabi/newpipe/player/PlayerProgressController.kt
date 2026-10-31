@@ -72,6 +72,7 @@ class PlayerProgressController(private val player: Player) : SeekBar.OnSeekBarCh
             return
         }
 
+        player.persistentQueueController.tick()
         val exoPlayer = player.simpleExoPlayer
         val currentItem = player.currentItem
 
@@ -98,6 +99,10 @@ class PlayerProgressController(private val player: Player) : SeekBar.OnSeekBarCh
             && duration > 0
             && currentProgress > duration + 3000
         ) {
+            if (player.isPersistentQueueMode) {
+                player.persistentQueueController.consume(true)
+                return
+            }
             player.changeState(PlayerPlaybackState.COMPLETED)
             player.saveStreamProgressStateCompleted()
             player.isPrepared = false

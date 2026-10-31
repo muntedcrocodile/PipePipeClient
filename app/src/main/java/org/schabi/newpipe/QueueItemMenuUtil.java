@@ -49,8 +49,8 @@ public final class QueueItemMenuUtil {
 
         popupMenu.setOnMenuItemClickListener(menuItem -> {
             if (menuItem.getItemId() == R.id.menu_item_remove) {
-                final int index = playQueue.indexOf(item);
-                playQueue.remove(index);
+                org.schabi.newpipe.player.playqueue.QueueViewActions.remove(
+                        context, playQueue, playQueue.indexOf(item));
                 return true;
             } else if (menuItem.getItemId() == R.id.menu_item_details) {
                 NavigationHelper.openVideoDetail(context, item.getServiceId(),

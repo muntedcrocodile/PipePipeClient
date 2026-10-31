@@ -174,7 +174,8 @@ data class PlayerMediaItem(
                 .serviceId(item.serviceId)
                 .url(item.url)
                 .title(item.name)
-                .uploader(item.uploaderName)
+                // Sparse list rows need not include an uploader; extraction fills it later.
+                .uploader(item.uploaderName ?: "")
                 .uploaderUrl(item.uploaderUrl)
                 .duration(item.duration)
                 .thumbnailUrl(item.thumbnailUrl)
