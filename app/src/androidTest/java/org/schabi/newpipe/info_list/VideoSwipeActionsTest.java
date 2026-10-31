@@ -546,6 +546,64 @@ public class VideoSwipeActionsTest {
         assertPhysicalSwipes(true);
     }
 
+    @Test
+    public void disabledSourceSwipesDoNotClickOrLongClickRows() {
+        assertDisabledPhysicalSwipes(false);
+    }
+
+    @Test
+    public void disabledPlaylistSwipesDoNotClickOrFallBackToLegacyDelete() {
+        assertDisabledPhysicalSwipes(true);
+    }
+
+    private void assertDisabledPhysicalSwipes(final boolean playlist) {
+        prefs.edit().putString("video_swipe_left_action", "none")
+                .putString("video_swipe_right_action", "none")
+                .putString(context.getString(R.string.local_playlist_swipe_action_key), "delete")
+                .commit();
+        withActivity(activity -> {
+            for (final int direction : Arrays.asList(View.LAYOUT_DIRECTION_LTR,
+                    View.LAYOUT_DIRECTION_RTL)) {
+                final SwipeFixture[] fixture = new SwipeFixture[1];
+                final int[] clicks = {0};
+                final int[] longClicks = {0};
+                onMain(() -> {
+                    fixture[0] = new SwipeFixture(activity, playlist);
+                    final SourceFragment fragment = new SourceFragment();
+                    activity.getSupportFragmentManager().beginTransaction()
+                            .add(fragment, null).commitNow();
+                    fixture[0].list.setLayoutDirection(direction);
+                    activity.setContentView(fixture[0].list);
+                    VideoSwipeActions.protectTabGesture(fragment, fixture[0].list,
+                            position -> position < 0 || position >= 2 ? null
+                                    : new VideoSwipeActions.Row(video(position == 0 ? "A" : "B"),
+                                            playlist ? () -> { } : null, null));
+                    new ItemTouchHelper(fixture[0].callback).attachToRecyclerView(fixture[0].list);
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                onMain(() -> {
+                    for (int i = 0; i < 2; i++) {
+                        final View row = fixture[0].list.findViewHolderForAdapterPosition(i).itemView;
+                        row.setOnClickListener(v -> clicks[0]++);
+                        row.setOnLongClickListener(v -> { longClicks[0]++; return true; });
+                    }
+                    fixture[0].list.findViewHolderForAdapterPosition(0).itemView.performClick();
+                    assertEquals(1, clicks[0]);
+                    clicks[0] = 0;
+                });
+                swipeRow(fixture[0].list, 0, false);
+                swipeRow(fixture[0].list, 1, true);
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                onMain(() -> {
+                    assertEquals(0, clicks[0]);
+                    assertEquals(0, longClicks[0]);
+                    assertEquals(0, fixture[0].context.submitted.size());
+                    assertEquals(2, fixture[0].adapter.getItemCount());
+                });
+            }
+        });
+    }
+
     private void assertPhysicalSwipes(final boolean playlist) {
         withActivity(activity -> {
             for (final int direction : Arrays.asList(View.LAYOUT_DIRECTION_LTR,

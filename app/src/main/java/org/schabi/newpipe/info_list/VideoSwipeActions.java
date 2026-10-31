@@ -187,6 +187,7 @@ public final class VideoSwipeActions {
             private float startX;
             private float startY;
             private int allowed;
+            private boolean videoRow;
             private final int slop = ViewConfiguration.get(list.getContext()).getScaledTouchSlop();
 
             @Override
@@ -198,26 +199,47 @@ public final class VideoSwipeActions {
                     final View child = list.findChildViewUnder(startX, startY);
                     final Row row = child == null ? null
                             : resolver.resolve(list.getChildAdapterPosition(child));
-                    allowed = row == null || fragment.getContext() == null ? 0
-                            : directions(fragment.requireContext(), row);
+                    videoRow = row != null && fragment.getContext() != null
+                            && isEnabled(fragment.requireContext());
+                    allowed = !videoRow ? 0 : directions(fragment.requireContext(), row);
                     if (allowed != 0) {
                         list.getParent().requestDisallowInterceptTouchEvent(true);
                     }
-                } else if (event.getActionMasked() == MotionEvent.ACTION_MOVE && allowed != 0) {
+                } else if (event.getActionMasked() == MotionEvent.ACTION_MOVE && videoRow) {
                     final float dx = event.getX() - startX;
                     final float dy = event.getY() - startY;
+                    if (Math.abs(dx) > slop && Math.abs(dx) > Math.abs(dy)
+                            && (allowed & (dx < 0 ? ItemTouchHelper.LEFT
+                                    : ItemTouchHelper.RIGHT)) == 0) {
+                        // Cancel child clicks too: a horizontal drag inside a wide disabled
+                        // row would otherwise become Play or a long-press action sheet.
+                        return true;
+                    }
                     if (Math.max(Math.abs(dx), Math.abs(dy)) > slop
                             && (Math.abs(dy) > Math.abs(dx)
                             || (allowed & (dx < 0 ? ItemTouchHelper.LEFT : ItemTouchHelper.RIGHT)) == 0)) {
                         list.getParent().requestDisallowInterceptTouchEvent(false);
                         allowed = 0;
+                        videoRow = false;
                     }
                 } else if (event.getActionMasked() == MotionEvent.ACTION_UP
                         || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
                     list.getParent().requestDisallowInterceptTouchEvent(false);
                     allowed = 0;
+                    videoRow = false;
                 }
                 return false;
+            }
+
+            @Override
+            public void onTouchEvent(@NonNull final RecyclerView recyclerView,
+                                     @NonNull final MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_UP
+                        || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    list.getParent().requestDisallowInterceptTouchEvent(false);
+                    videoRow = false;
+                    allowed = 0;
+                }
             }
         });
     }
