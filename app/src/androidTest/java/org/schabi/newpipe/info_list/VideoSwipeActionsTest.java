@@ -196,6 +196,147 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void selectingAnotherVideoCancelsDeferredFullscreenWithoutAutoplayingIt() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.setAutoPlay(true);
+            fixture.fragment.openVideoPlayer(true);
+            fixture.fragment.setAutoPlay(false);
+            fixture.select("B");
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            fixture.complete(fixture.info("B"), fixture.generation());
+            assertEquals(0, fixture.activity.intents.size());
+            assertEquals(false, readField(fixture.fragment, "pendingVideoFullscreen"));
+        });
+    }
+
+    @Test
+    public void closingDetailCancelsDeferredOpenAndIgnoresBothLateMetadataPaths() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.openVideoPlayer(true);
+            final long generation = fixture.generation();
+            final PlayQueue oldQueue = fixture.queue();
+            invokeDetail(fixture.fragment, "cleanUp");
+            fixture.complete(fixture.info("A"), generation);
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), oldQueue);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+        });
+    }
+
+    @Test
+    public void staleWorkerCannotConsumeANewRequestEvenWhenTheSameVideoIsReselected() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.openVideoPlayer(true);
+            final long firstGeneration = fixture.generation();
+            fixture.select("B");
+            fixture.select("A");
+            fixture.fragment.setAutoPlay(true);
+            fixture.fragment.openVideoPlayer(false);
+            fixture.complete(fixture.info("A"), firstGeneration);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", true);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED,
+                    readField(fixture.fragment, "bottomSheetState"));
+        });
+    }
+
+    @Test
+    public void workerMetadataCompletesDeferredFullscreenWhenExtractionCanonicalizesTheUrl() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.openVideoPlayer(true);
+            final var canonical = new org.schabi.newpipe.extractor.stream.StreamInfo(
+                    0, "https://example.com/canonical-A", fixture.info("A").getUrl(),
+                    StreamType.VIDEO_STREAM, "A", "A", 0);
+            fixture.complete(canonical, fixture.generation());
+            fixture.assertOpened("A", true);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED,
+                    readField(fixture.fragment, "bottomSheetState"));
+        });
+    }
+
+    @Test
+    public void unrelatedPlayerMetadataCannotConsumeDeferredOpenForTheSelectedStream() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.openVideoPlayer(true);
+            fixture.fragment.onMetadataUpdate(fixture.info("B"), fixture.queue());
+            final var otherService = new org.schabi.newpipe.extractor.stream.StreamInfo(
+                    1, fixture.info("A").getUrl(), fixture.info("A").getUrl(),
+                    StreamType.VIDEO_STREAM, "A", "A", 0);
+            fixture.fragment.onMetadataUpdate(otherService, fixture.queue());
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            final var selected = fixture.info("A");
+            fixture.fragment.onMetadataUpdate(selected, fixture.queue());
+            fixture.assertOpened("A", true);
+            assertEquals(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED,
+                    readField(fixture.fragment, "bottomSheetState"));
+            fixture.fragment.onMetadataUpdate(selected, fixture.queue());
+            assertEquals("The same player metadata must not open twice",
+                    1, fixture.activity.intents.size());
+        });
+    }
+
+    @Test
+    public void workerMetadataCompletesDeferredSwitchWithLatestNotificationPause() {
+        assertDeferredSwitchState(false, true);
+    }
+
+    @Test
+    public void playerMetadataCompletesDeferredSwitchWithLatestNotificationPause() {
+        assertDeferredSwitchState(true, true);
+    }
+
+    @Test
+    public void workerMetadataKeepsRequestedPlaybackWhileTheSourceIsBuffering() {
+        assertDeferredSwitchState(false, false);
+    }
+
+    @Test
+    public void playerMetadataKeepsRequestedPlaybackWhileTheSourceIsBuffering() {
+        assertDeferredSwitchState(true, false);
+    }
+
+    @Test
+    public void serviceStopCancelsDeferredOpenWithoutLateWorkerAutoplay() {
+        withVideoOpen(fixture -> {
+            fixture.fragment.setAutoPlay(true);
+            fixture.fragment.openVideoPlayer(true);
+            fixture.fragment.onServiceStopped();
+            fixture.complete(fixture.info("A"), fixture.generation());
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(0, fixture.activity.intents.size());
+        });
+    }
+
+    private void assertDeferredSwitchState(final boolean playerMetadata, final boolean pause) {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.fragment.setAutoPlay(true);
+            fixture.fragment.openVideoPlayer(false);
+            if (pause) {
+                // The notification's play/pause action uses this production transport method.
+                fixture.player.playPause();
+            }
+            assertEquals(!pause, fixture.player.getPlayWhenReady());
+            assertEquals(false, fixture.player.isPlaying());
+            if (playerMetadata) {
+                fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            } else {
+                fixture.complete(fixture.info("A"), fixture.generation());
+            }
+            fixture.assertOpened("A", !pause);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+        });
+    }
+
+    @Test
     public void queueLinkFromStandaloneBookmarksUsesActivityContainer() {
         assertQueueLinkNavigation(false);
     }
@@ -776,6 +917,246 @@ public class VideoSwipeActionsTest {
 
     private static void onMain(final Runnable action) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(action);
+    }
+
+    private void withVideoOpen(final Consumer<VideoOpenFixture> test) {
+        withActivity(activity -> onMain(() -> {
+            final VideoOpenFixture fixture = new VideoOpenFixture(activity);
+            try {
+                test.accept(fixture);
+            } finally {
+                fixture.close();
+            }
+        }));
+    }
+
+    private static Field accessibleField(final Object target, final String name) {
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                final Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (final NoSuchFieldException ignored) {
+                // Private production state can belong to a base fragment/player class.
+            }
+        }
+        throw new AssertionError("Missing field " + name);
+    }
+
+    private static Object readField(final Object target, final String name) {
+        try {
+            return accessibleField(target, name).get(target);
+        } catch (final IllegalAccessException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private static void writeField(final Object target, final String name, final Object value) {
+        try {
+            accessibleField(target, name).set(target, value);
+        } catch (final IllegalAccessException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private static void invokeDetail(final VideoOpenFragment fragment, final String name) {
+        try {
+            final Method method = org.schabi.newpipe.fragments.detail.VideoDetailFragment.class
+                    .getDeclaredMethod(name);
+            method.setAccessible(true);
+            method.invoke(fragment);
+        } catch (final ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    /**
+     * Exercises real selection, metadata callbacks and openMainPlayer's service intent.
+     * Only detail rendering and the Android service launch are replaced; no network/player
+     * service is started. All callbacks run in one main-thread turn for deterministic ordering.
+     */
+    private final class VideoOpenFixture {
+        private final VideoOpenActivity activity;
+        private final VideoOpenFragment fragment;
+        private final org.schabi.newpipe.player.helper.PlayerHolder holder =
+                org.schabi.newpipe.player.helper.PlayerHolder.getInstance();
+        private final Object oldListener;
+        private final List<String> cachedUrls = new ArrayList<>();
+        private org.schabi.newpipe.player.Player player;
+        private com.google.android.exoplayer2.ExoPlayer exo;
+
+        VideoOpenFixture(final FragmentActivity host) {
+            holder.stopService();
+            oldListener = readField(holder, "listener");
+            activity = new VideoOpenActivity(host);
+            fragment = new VideoOpenFragment(host, activity);
+            writeField(fragment, "binding", org.schabi.newpipe.databinding.FragmentVideoDetailBinding
+                    .inflate(android.view.LayoutInflater.from(host)));
+            writeField(fragment, "pageAdapter", new org.schabi.newpipe.fragments.detail.TabAdapter(
+                    host.getSupportFragmentManager()));
+            writeField(fragment, "bottomSheetState",
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED);
+            writeField(holder, "listener", fragment);
+            final var service = (org.schabi.newpipe.player.mediasession.PlayerServiceInterface)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                            org.schabi.newpipe.player.mediasession.PlayerServiceInterface.class.getClassLoader(),
+                            new Class<?>[]{org.schabi.newpipe.player.mediasession.PlayerServiceInterface.class},
+                            (proxy, method, args) -> {
+                                if (method.getName().equals("getView")) return null;
+                                throw new AssertionError("Unexpected service call: " + method.getName());
+                            });
+            writeField(fragment, "playerService", service);
+            select("A");
+        }
+
+        org.schabi.newpipe.extractor.stream.StreamInfo info(final String name) {
+            final String url = "https://example.com/deferred-open-" + name;
+            final var info = new org.schabi.newpipe.extractor.stream.StreamInfo(
+                    0, url, url, StreamType.VIDEO_STREAM, name, name, 0);
+            info.setUploaderName("test uploader");
+            info.setThumbnailUrl("");
+            return info;
+        }
+
+        void select(final String name) {
+            final var info = info(name);
+            org.schabi.newpipe.util.InfoCache.getInstance().putInfo(0, info.getUrl(), info,
+                    org.schabi.newpipe.extractor.InfoItem.InfoType.STREAM);
+            cachedUrls.add(info.getUrl());
+            fragment.selectAndLoadVideo(0, info.getUrl(), name,
+                    new org.schabi.newpipe.player.playqueue.SinglePlayQueue(info));
+            // Extraction uses only the above cached metadata. Deliver its production callback
+            // explicitly below, including callbacks already queued before disposal/navigation.
+            ((io.reactivex.rxjava3.disposables.Disposable)
+                    readField(fragment, "currentWorker")).dispose();
+        }
+
+        long generation() {
+            return (Long) readField(fragment, "videoSelectionGeneration");
+        }
+
+        PlayQueue queue() {
+            return (PlayQueue) readField(fragment, "playQueue");
+        }
+
+        void complete(final org.schabi.newpipe.extractor.stream.StreamInfo info,
+                      final long generation) {
+            try {
+                final Method callback = org.schabi.newpipe.fragments.detail.VideoDetailFragment.class
+                        .getDeclaredMethod("onStreamInfoLoaded",
+                                org.schabi.newpipe.extractor.stream.StreamInfo.class,
+                                long.class, boolean.class);
+                callback.setAccessible(true);
+                callback.invoke(fragment, info, generation, false);
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+        }
+
+        void connectBufferingPlayer() {
+            final var serviceContext = new VideoOpenService(context);
+            final var service = (org.schabi.newpipe.player.mediasession.PlayerServiceInterface)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                            org.schabi.newpipe.player.mediasession.PlayerServiceInterface.class.getClassLoader(),
+                            new Class<?>[]{org.schabi.newpipe.player.mediasession.PlayerServiceInterface.class},
+                            (proxy, method, args) -> {
+                                if (method.getName().equals("getInstance")) return serviceContext;
+                                if (method.getName().equals("isLandscape")) return false;
+                                throw new AssertionError("Unexpected service call: " + method.getName());
+                            });
+            player = new org.schabi.newpipe.player.Player(service);
+            exo = new com.google.android.exoplayer2.ExoPlayer.Builder(context).build();
+            writeField(player, "simpleExoPlayer", exo);
+            writeField(player, "playQueue", queue());
+            writeField(player, "audioReactor",
+                    new org.schabi.newpipe.player.helper.AudioReactor(context, exo));
+            writeField(fragment, "player", player);
+            exo.setPlayWhenReady(true);
+            exo.setMediaSource(new com.google.android.exoplayer2.source.SilenceMediaSource.Factory()
+                    .setDurationUs(600_000_000L).createMediaSource());
+            exo.prepare();
+            assertEquals(com.google.android.exoplayer2.Player.STATE_BUFFERING, exo.getPlaybackState());
+            assertEquals(false, player.isPlaying());
+        }
+
+        void assertOpened(final String name, final boolean playWhenReady) {
+            assertEquals(1, activity.intents.size());
+            assertEquals(info(name).getUrl(), activity.openedUrls.get(0));
+            assertEquals(playWhenReady, activity.intents.get(0)
+                    .getBooleanExtra(PlayerIntentConstants.PLAY_WHEN_READY, !playWhenReady));
+        }
+
+        void close() {
+            final Object worker = readField(fragment, "currentWorker");
+            if (worker != null) ((io.reactivex.rxjava3.disposables.Disposable) worker).dispose();
+            writeField(fragment, "binding", null); // Reject delayed rendering after this test turn.
+            writeField(holder, "listener", oldListener);
+            for (final String url : cachedUrls) {
+                org.schabi.newpipe.util.InfoCache.getInstance().removeInfo(0, url,
+                        org.schabi.newpipe.extractor.InfoItem.InfoType.STREAM);
+            }
+            if (player != null) {
+                player.getAudioReactor().dispose();
+                player.getPersistentQueueController().close();
+                ((org.schabi.newpipe.player.SponsorBlockController)
+                        readField(player, "sponsorBlockController")).destroy();
+                ((com.google.android.exoplayer2.trackselection.DefaultTrackSelector)
+                        readField(player, "trackSelector")).release();
+                writeField(player, "simpleExoPlayer", null);
+            }
+            if (exo != null) exo.release();
+        }
+    }
+
+    private static final class VideoOpenFragment
+            extends org.schabi.newpipe.fragments.detail.VideoDetailFragment {
+        private final Context testContext;
+
+        VideoOpenFragment(final Context context, final VideoOpenActivity activity) {
+            testContext = context;
+            this.activity = activity;
+        }
+
+        @Override public Context getContext() { return testContext; }
+        @Override public void showLoading() { }
+
+        @Override
+        public void handleResult(final org.schabi.newpipe.extractor.stream.StreamInfo info) {
+            // Replace tab/thumbnail rendering, retaining the production metadata assignment.
+            writeField(this, "currentInfo", info);
+            setInitialData(info.getServiceId(), info.getOriginalUrl(), info.getName(), playQueue);
+        }
+    }
+
+    /** Captures the actual openMainPlayer intent without launching an Android service. */
+    private static final class VideoOpenActivity extends androidx.appcompat.app.AppCompatActivity {
+        private final List<Intent> intents = new ArrayList<>();
+        private final List<String> openedUrls = new ArrayList<>();
+
+        VideoOpenActivity(final Context context) { attachBaseContext(context); }
+
+        @Override
+        public ComponentName startForegroundService(final Intent intent) {
+            return startService(intent);
+        }
+
+        @Override
+        public ComponentName startService(final Intent intent) {
+            final PlayQueue queue = SerializedCache.getInstance().take(
+                    intent.getStringExtra(PlayerIntentConstants.PLAY_QUEUE_KEY), PlayQueue.class);
+            assertNotNull(queue);
+            openedUrls.add(queue.getItem().getUrl());
+            intents.add(intent);
+            return intent.getComponent();
+        }
+    }
+
+    private static final class VideoOpenService extends android.app.Service {
+        VideoOpenService(final Context context) {
+            attachBaseContext(context);
+            setTheme(R.style.DarkTheme);
+        }
+        @Override public android.os.IBinder onBind(final Intent intent) { return null; }
     }
 
     private void withActivity(final Consumer<FragmentActivity> test) {
