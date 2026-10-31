@@ -129,7 +129,7 @@ import static org.schabi.newpipe.player.helper.PlayerHelper.globalScreenOrientat
 import static org.schabi.newpipe.player.playqueue.PlayQueue.RECOVERY_UNSET;
 import static org.schabi.newpipe.util.ExtractorHelper.showMetaInfoInTextView;
 
-public final class VideoDetailFragment
+public class VideoDetailFragment
         extends BaseStateFragment<StreamInfo>
         implements BackPressable,
         SharedPreferences.OnSharedPreferenceChangeListener,
@@ -224,6 +224,11 @@ public final class VideoDetailFragment
     protected boolean autoPlayEnabled = true;
     private boolean pendingVideoOpen;
     private boolean pendingVideoFullscreen;
+    private long videoSelectionGeneration;
+    private long pendingVideoSelectionGeneration;
+    private int pendingVideoServiceId;
+    @Nullable
+    private String pendingVideoUrl;
 
     @Nullable
     private StreamInfo currentInfo = null;
@@ -370,6 +375,8 @@ public final class VideoDetailFragment
         outState.putBoolean("autoPlayEnabled", autoPlayEnabled);
         outState.putBoolean("pendingVideoOpen", pendingVideoOpen);
         outState.putBoolean("pendingVideoFullscreen", pendingVideoFullscreen);
+        outState.putInt("pendingVideoServiceId", pendingVideoServiceId);
+        outState.putString("pendingVideoUrl", pendingVideoUrl);
     }
 
     @Override
@@ -383,6 +390,9 @@ public final class VideoDetailFragment
         autoPlayEnabled = savedInstanceState.getBoolean("autoPlayEnabled", true);
         pendingVideoOpen = savedInstanceState.getBoolean("pendingVideoOpen", false);
         pendingVideoFullscreen = savedInstanceState.getBoolean("pendingVideoFullscreen", false);
+        pendingVideoSelectionGeneration = videoSelectionGeneration;
+        pendingVideoServiceId = savedInstanceState.getInt("pendingVideoServiceId", serviceId);
+        pendingVideoUrl = savedInstanceState.getString("pendingVideoUrl", url);
     }
 
     @Override
@@ -447,6 +457,7 @@ public final class VideoDetailFragment
     @Override
     public void onDestroy() {
         super.onDestroy();
+        invalidateVideoSelection();
 
         // Stop the service when user leaves the app with double back press
         // if video player is selected. Otherwise unbind
@@ -916,6 +927,11 @@ public final class VideoDetailFragment
             return true;
         }
 
+        if (pendingVideoOpen) {
+            cancelPendingVideoOpen();
+            setAutoPlay(false);
+        }
+
         // If we are in fullscreen mode just exit from it via first back press
         if (isPlayerAvailable() && player.isFullscreen()) {
             if (!DeviceUtils.isTablet(activity)) {
@@ -965,6 +981,7 @@ public final class VideoDetailFragment
     }
 
     private void setupFromHistoryItem(final StackItem item) {
+        invalidateVideoSelection();
         setAutoPlay(false);
         hideMainPlayerOnLoadingNewStream();
 
@@ -1007,6 +1024,8 @@ public final class VideoDetailFragment
                                    @Nullable final String newUrl,
                                    @NonNull final String newTitle,
                                    @Nullable final PlayQueue newQueue) {
+        // Even selecting the same URL again supersedes the earlier explicit open.
+        invalidateVideoSelection();
         if (isPlayerAvailable() && newQueue != null && playQueue != null
                 && playQueue.getItem() != null && !playQueue.getItem().getUrl().equals(newUrl)) {
             // Preloading can be disabled since playback is surely being replaced.
@@ -1020,8 +1039,11 @@ public final class VideoDetailFragment
     private void prepareAndHandleInfoIfNeededAfterDelay(final StreamInfo info,
                                                         final boolean scrollToTop,
                                                         final long delay) {
+        final long selectionGeneration = videoSelectionGeneration;
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            if (activity == null) {
+            if (activity == null || binding == null
+                    || selectionGeneration != videoSelectionGeneration
+                    || currentInfo != info) {
                 return;
             }
             // Data can already be drawn, don't spend time twice. The displayed title is not
@@ -1087,30 +1109,42 @@ public final class VideoDetailFragment
     }
 
     private void runWorker(final boolean forceLoad, final boolean addToBackStack) {
-        final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity);
+        final long selectionGeneration = videoSelectionGeneration;
         currentWorker = ExtractorHelper.getStreamInfo(serviceId, url, forceLoad
                         || url.contains("live.bilibili.com"))
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(result -> {
-                    isLoading.set(false);
-                    hideMainPlayerOnLoadingNewStream();
-                    handleResult(result);
-                    showContent();
-                    if (addToBackStack) {
-                        if (playQueue == null) {
-                            playQueue = new SinglePlayQueue(result);
-                        }
-                        if (stack.isEmpty() || !stack.peek().getPlayQueue().equals(playQueue)) {
-                            stack.push(new StackItem(serviceId, url, title, playQueue));
-                        }
-                    }
+                .subscribe(result -> onStreamInfoLoaded(result, selectionGeneration, addToBackStack),
+                        throwable -> {
+                            if (selectionGeneration == videoSelectionGeneration && binding != null) {
+                                showError(new ErrorInfo(throwable, UserAction.REQUESTED_STREAM,
+                                        url == null ? "no url" : url, serviceId));
+                            }
+                        });
+    }
 
-                    if (!openPendingVideoPlayer() && isAutoplayEnabled()) {
-                        openVideoPlayerAutoFullscreen();
-                    }
-                }, throwable -> showError(new ErrorInfo(throwable, UserAction.REQUESTED_STREAM,
-                        url == null ? "no url" : url, serviceId)));
+    private void onStreamInfoLoaded(final StreamInfo result, final long selectionGeneration,
+                                    final boolean addToBackStack) {
+        if (selectionGeneration != videoSelectionGeneration || activity == null || binding == null
+                || (pendingVideoOpen && !isPendingVideoInfo(result))) {
+            return;
+        }
+        isLoading.set(false);
+        hideMainPlayerOnLoadingNewStream();
+        handleResult(result);
+        showContent();
+        if (addToBackStack) {
+            if (playQueue == null) {
+                playQueue = new SinglePlayQueue(result);
+            }
+            if (stack.isEmpty() || !stack.peek().getPlayQueue().equals(playQueue)) {
+                stack.push(new StackItem(serviceId, url, title, playQueue));
+            }
+        }
+
+        if (!openPendingVideoPlayer() && isAutoplayEnabled()) {
+            openVideoPlayerAutoFullscreen();
+        }
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -1438,6 +1472,7 @@ public final class VideoDetailFragment
     //////////////////////////////////////////////////////////////////////////*/
 
     private void openBackgroundPlayer(final boolean append) {
+        cancelPendingVideoOpen();
 
         final boolean useExternalAudioPlayer = false;
 
@@ -1464,6 +1499,7 @@ public final class VideoDetailFragment
             PermissionHelper.showPopupEnablementToast(activity);
             return;
         }
+        cancelPendingVideoOpen();
 
         // See UI changes while remote playQueue changes
         if (!isPlayerAvailable()) {
@@ -1497,8 +1533,13 @@ public final class VideoDetailFragment
             // interpreting a not-yet-ready player as paused during service reconnection.
             pendingVideoOpen = true;
             pendingVideoFullscreen = directlyFullscreenIfApplicable;
+            pendingVideoSelectionGeneration = videoSelectionGeneration;
+            final PlayerMediaItem item = playQueue == null ? null : playQueue.getItem();
+            pendingVideoServiceId = url != null || item == null ? serviceId : item.getServiceId();
+            pendingVideoUrl = url != null || item == null ? url : item.getUrl();
             return;
         }
+        cancelPendingVideoOpen();
         if (directlyFullscreenIfApplicable) {
             // Make sure the bottom sheet turns out expanded. When this code kicks in the bottom
             // sheet could not have fully expanded yet, and thus be in the STATE_SETTLING state.
@@ -1520,13 +1561,38 @@ public final class VideoDetailFragment
     }
 
     private boolean openPendingVideoPlayer() {
-        if (!pendingVideoOpen || currentInfo == null || activity == null || binding == null) {
+        if (!pendingVideoOpen || currentInfo == null || activity == null || binding == null
+                || !isPendingVideoInfo(currentInfo)) {
             return false;
         }
+        // Metadata can take long enough for notification/media-session controls to change
+        // the connected player's intent. Read playWhenReady, including while buffering,
+        // rather than replaying the autoplay snapshot taken when the switch was requested.
+        if (isPlayerAvailable() && !player.exoPlayerIsNull()) {
+            setAutoPlay(player.getPlayWhenReady());
+        }
         final boolean fullscreen = pendingVideoFullscreen;
-        pendingVideoOpen = false;
+        cancelPendingVideoOpen();
         openVideoPlayer(fullscreen);
         return true;
+    }
+
+    private boolean isPendingVideoInfo(final StreamInfo info) {
+        return pendingVideoSelectionGeneration == videoSelectionGeneration
+                && (pendingVideoUrl == null || (pendingVideoServiceId == info.getServiceId()
+                && (pendingVideoUrl.equals(info.getUrl())
+                || pendingVideoUrl.equals(info.getOriginalUrl()))));
+    }
+
+    private void cancelPendingVideoOpen() {
+        pendingVideoOpen = false;
+        pendingVideoFullscreen = false;
+        pendingVideoUrl = null;
+    }
+
+    private void invalidateVideoSelection() {
+        videoSelectionGeneration++;
+        cancelPendingVideoOpen();
     }
 
     /**
@@ -1854,6 +1920,7 @@ public final class VideoDetailFragment
 
     @Override
     public void handleError() {
+        invalidateVideoSelection();
         super.handleError();
         setErrorImage(R.drawable.not_available_monkey);
 
@@ -2315,6 +2382,9 @@ public final class VideoDetailFragment
 
     @Override
     public void onMetadataUpdate(final StreamInfo info, final PlayQueue queue) {
+        if (pendingVideoOpen && queue.equals(playQueue) && !isPendingVideoInfo(info)) {
+            return;
+        }
         if (player != null) {
             final SponsorBlockMode mode = SponsorBlockHelper.getSkippingMode(requireContext());
             getSponsorBlockFragment().ifPresent(
@@ -2334,7 +2404,6 @@ public final class VideoDetailFragment
         if (!queue.equals(playQueue)) {
             return;
         }
-
         updateOverlayData(info.getName(), info.getUploaderName(), info.getThumbnailUrl());
         if (currentInfo != null && info.getUrl().equals(currentInfo.getUrl())) {
             openPendingVideoPlayer();
@@ -2368,6 +2437,10 @@ public final class VideoDetailFragment
 
     @Override
     public void onServiceStopped() {
+        if (pendingVideoOpen) {
+            cancelPendingVideoOpen();
+            setAutoPlay(false);
+        }
         if (binding != null) {
             setOverlayPlayPauseImage(false);
             if (currentInfo != null) {
@@ -2589,6 +2662,7 @@ public final class VideoDetailFragment
      * Remove unneeded information while waiting for a next task
      * */
     private void cleanUp() {
+        invalidateVideoSelection();
         // New beginning
         stack.clear();
         if (currentWorker != null) {
