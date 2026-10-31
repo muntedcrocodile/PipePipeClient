@@ -392,17 +392,35 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
-    public void explicitPlayOfCurrentOccurrenceHonorsPauseAfterObservedPlaybackRequest() {
+    public void explicitPlayOfCurrentOccurrenceHonorsProductionPauseDuringInitialBuffering() {
+        assertInitialBufferingTransportPause(false);
+        assertInitialBufferingTransportPause(true);
+    }
+
+    private void assertInitialBufferingTransportPause(final boolean playerMetadata) {
         withVideoOpen(fixture -> {
             fixture.connectBufferingPlayer();
+            fixture.registerExoPlayerEventAdapter();
             fixture.player.playPause();
             fixture.requestExplicitPlayback();
+            final String before = fixture.player.getPlayWhenReadyChangeToken(
+                    fixture.queue().getItem().getUuid());
+            assertNotNull(before);
+            // Actual notification/UI transport -> ExoPlayer -> registered production adapter.
+            // No prepared-state playback notification (or direct fragment callback) is needed.
             fixture.player.playPause();
-            fixture.fragment.onPlaybackUpdate(org.schabi.newpipe.player.PlayerPlaybackState.BUFFERING,
-                    org.schabi.newpipe.player.RepeatMode.OFF, false,
-                    new org.schabi.newpipe.player.PlayerPlaybackParameters(1.0f, 1.0f));
             fixture.player.playPause();
-            fixture.complete(fixture.info("A"), fixture.generation());
+            assertEquals(com.google.android.exoplayer2.Player.STATE_BUFFERING,
+                    fixture.exo.getPlaybackState());
+            assertEquals(false, readField(fixture.player, "isPrepared"));
+            assertEquals(false, fixture.player.getPlayWhenReady());
+            org.junit.Assert.assertNotEquals(before, fixture.player.getPlayWhenReadyChangeToken(
+                    fixture.queue().getItem().getUuid()));
+            if (playerMetadata) {
+                fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            } else {
+                fixture.complete(fixture.info("A"), fixture.generation());
+            }
             fixture.assertOpened("A", false);
         });
     }
@@ -450,6 +468,98 @@ public class VideoSwipeActionsTest {
             fixture.fragment.onMetadataUpdate(fixture.info("B"), queue);
             fixture.assertOpened("B", true);
             assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+        });
+    }
+
+    @Test
+    public void recreatedBackgroundSwitchFollowsTheLiveQueuesAdvancedHead() {
+        assertRecreatedSwitchFollowsNext(false);
+    }
+
+    @Test
+    public void recreatedPopupSwitchRejectsOldMetadataForTheDuplicateOccurrence() {
+        assertRecreatedSwitchFollowsNext(true);
+    }
+
+    private void assertRecreatedSwitchFollowsNext(final boolean duplicate) {
+        withVideoOpen(fixture -> {
+            final String next = duplicate ? "A" : "B";
+            fixture.prepareColdQueue("A", next);
+            fixture.connectBufferingPlayer();
+            writeField(fixture.player, "playerType", duplicate
+                    ? org.schabi.newpipe.player.PlayerService.PlayerType.POPUP
+                    : org.schabi.newpipe.player.PlayerService.PlayerType.AUDIO);
+            final PlayQueue liveQueue = fixture.queue();
+            final var oldHead = liveQueue.getItem();
+            liveQueue.setRecovery(1, 42_000L);
+            fixture.setPlayerMetadata(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forStreamInfo(fixture.info("A")).withUuid(oldHead.getUuid()));
+            fixture.fragment.switchToVideoPlayer(false);
+            final android.os.Bundle state = fixture.saveState();
+            fixture.recreate(state);
+            liveQueue.remove(0); // Next while the replacement fragment has no service connection.
+            fixture.player.playPause();
+            assertSame(liveQueue, readField(fixture.fragment, "pendingVideoQueue"));
+            if (duplicate) {
+                // The restored A worker cannot consume the next occurrence's switch, even
+                // before reconnect/queue callbacks and when the URLs are identical.
+                fixture.complete(fixture.info("A"), fixture.generation());
+                assertEquals(liveQueue.getItem().getUuid(),
+                        readField(fixture.fragment, "pendingVideoOccurrenceId"));
+            }
+            fixture.reconnect();
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), liveQueue);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            assertEquals(0, fixture.activity.intents.size());
+            final var nextMetadata = org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                    .forStreamInfo(fixture.info(next)).withUuid(liveQueue.getItem().getUuid());
+            if (duplicate) {
+                fixture.fragment.onQueueUpdate(liveQueue);
+                fixture.deliverPlayerMetadata(nextMetadata);
+            } else {
+                // Valid B metadata can be the first callback reporting the advanced head.
+                fixture.setPlayerMetadata(nextMetadata);
+                fixture.fragment.onMetadataUpdate(fixture.info(next), liveQueue);
+                fixture.fragment.onQueueUpdate(liveQueue);
+            }
+            fixture.assertOpened(next, false);
+            assertSame(liveQueue, fixture.queue());
+            assertEquals(42_000L, fixture.queue().getRecoveryPosition(0));
+        });
+    }
+
+    @Test
+    public void recreatedSwitchRejectsAnotherQueueEvenWithTheSameOccurrenceIds() {
+        withVideoOpen(fixture -> {
+            fixture.prepareColdQueue("A", "B");
+            fixture.fragment.switchToVideoPlayer(false);
+            final android.os.Bundle state = fixture.saveState();
+            final PlayQueue originalQueue = fixture.queue();
+            final PlayQueue unrelated;
+            try {
+                unrelated = org.schabi.newpipe.util.SerializedUtils.clone(originalQueue, PlayQueue.class);
+            } catch (final Exception error) {
+                throw new AssertionError(error);
+            }
+            org.junit.Assert.assertNotSame(originalQueue, unrelated);
+            assertEquals(originalQueue.getItem().getUuid(), unrelated.getItem().getUuid());
+            fixture.recreate(state);
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), unrelated);
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertNull(readField(fixture.fragment, "currentInfo"));
+            fixture.fragment.onQueueUpdate(unrelated);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            fixture.complete(fixture.info("A"), fixture.generation());
+            assertEquals(0, fixture.activity.intents.size());
+
+            // An absent/dead-process Binder must not resurrect the saved pending autoplay.
+            state.putBinder("pendingVideoQueueReference", new android.os.Binder());
+            fixture.recreate(state);
+            assertEquals(false, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(false, readField(fixture.fragment, "autoPlayEnabled"));
+            fixture.complete(fixture.info("A"), fixture.generation());
+            assertEquals(0, fixture.activity.intents.size());
         });
     }
 
@@ -1200,13 +1310,14 @@ public class VideoSwipeActionsTest {
      */
     private final class VideoOpenFixture {
         private final VideoOpenActivity activity;
-        private final VideoOpenFragment fragment;
+        private VideoOpenFragment fragment;
         private final org.schabi.newpipe.player.helper.PlayerHolder holder =
                 org.schabi.newpipe.player.helper.PlayerHolder.getInstance();
         private final Object oldListener;
         private final List<String> cachedUrls = new ArrayList<>();
         private org.schabi.newpipe.player.Player player;
         private com.google.android.exoplayer2.ExoPlayer exo;
+        private com.google.android.exoplayer2.Player.Listener exoEventAdapter;
 
         VideoOpenFixture(final FragmentActivity host) {
             holder.stopService();
@@ -1291,6 +1402,52 @@ public class VideoSwipeActionsTest {
             writeField(fragment, "playQueue", queue);
         }
 
+        android.os.Bundle saveState() {
+            final android.os.Bundle state = new android.os.Bundle();
+            fragment.onSaveInstanceState(state);
+            // Exercise Bundle's actual Binder parceling rather than copying test-only fields.
+            final android.os.Parcel parcel = android.os.Parcel.obtain();
+            try {
+                parcel.writeBundle(state);
+                parcel.setDataPosition(0);
+                return parcel.readBundle(getClass().getClassLoader());
+            } finally {
+                parcel.recycle();
+            }
+        }
+
+        void recreate(final android.os.Bundle state) {
+            final VideoOpenFragment old = fragment;
+            final Object worker = readField(old, "currentWorker");
+            if (worker != null) ((io.reactivex.rxjava3.disposables.Disposable) worker).dispose();
+            fragment = new VideoOpenFragment(old.getContext(), activity);
+            writeField(fragment, "binding", readField(old, "binding"));
+            writeField(old, "binding", null);
+            writeField(fragment, "pageAdapter", readField(old, "pageAdapter"));
+            writeField(fragment, "playerService", readField(old, "playerService"));
+            if (player != null) player.removeFragmentListener(old);
+            writeField(holder, "listener", fragment);
+            fragment.onRestoreInstanceState(state);
+        }
+
+        void reconnect() {
+            fragment.onServiceConnected(player,
+                    (org.schabi.newpipe.player.mediasession.PlayerServiceInterface)
+                            readField(fragment, "playerService"), false);
+        }
+
+        void registerExoPlayerEventAdapter() {
+            try {
+                final var constructor = Class.forName("org.schabi.newpipe.player.ExoPlayerEventAdapter")
+                        .getDeclaredConstructor(org.schabi.newpipe.player.Player.class);
+                constructor.setAccessible(true);
+                exoEventAdapter = (com.google.android.exoplayer2.Player.Listener) constructor.newInstance(player);
+                exo.addListener(exoEventAdapter);
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+        }
+
         void setPlayerMetadata(final org.schabi.newpipe.player.mediaitem.PlayerMediaItem item) {
             writeField(readField(player, "metadataController"), "currentMetadata", item);
         }
@@ -1360,6 +1517,7 @@ public class VideoSwipeActionsTest {
         }
 
         void close() {
+            if (exoEventAdapter != null) exo.removeListener(exoEventAdapter);
             final Object worker = readField(fragment, "currentWorker");
             if (worker != null) ((io.reactivex.rxjava3.disposables.Disposable) worker).dispose();
             writeField(fragment, "binding", null); // Reject delayed rendering after this test turn.
@@ -1393,6 +1551,11 @@ public class VideoSwipeActionsTest {
 
         @Override public Context getContext() { return testContext; }
         @Override public void showLoading() { }
+
+        @Override
+        public void onRestoreInstanceState(final android.os.Bundle state) {
+            super.onRestoreInstanceState(state);
+        }
 
         @Override
         public void handleResult(final org.schabi.newpipe.extractor.stream.StreamInfo info) {

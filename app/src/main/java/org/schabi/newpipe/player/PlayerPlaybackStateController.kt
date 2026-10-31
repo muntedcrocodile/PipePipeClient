@@ -11,6 +11,7 @@ import org.schabi.newpipe.R
 import org.schabi.newpipe.ktx.AnimationType
 import org.schabi.newpipe.ktx.animate
 import org.schabi.newpipe.player.helper.PlayerHelper
+import java.util.UUID
 
 /**
  * Owns the playback state machine of a [Player].
@@ -23,7 +24,20 @@ import org.schabi.newpipe.player.helper.PlayerHelper
  */
 class PlayerPlaybackStateController(private val player: Player) {
 
+    private var playWhenReadyChangeToken: String? = null
+    private var playWhenReadyOccurrenceId: String? = null
+
+    /** Transport changes exist even while the initial source has not reached STATE_READY. */
+    fun getPlayWhenReadyChangeToken(occurrenceId: String?): String? =
+        if (occurrenceId != null && occurrenceId == playWhenReadyOccurrenceId) {
+            playWhenReadyChangeToken
+        } else {
+            null
+        }
+
     fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        playWhenReadyOccurrenceId = player.playQueue?.getItem()?.uuid
+        playWhenReadyChangeToken = UUID.randomUUID().toString()
         if (Player.DEBUG) {
             Log.d(
                 Player.TAG, "ExoPlayer - onPlayWhenReadyChanged() called with: " +

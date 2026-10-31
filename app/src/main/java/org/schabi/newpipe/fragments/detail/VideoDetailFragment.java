@@ -14,6 +14,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -237,7 +238,22 @@ public class VideoDetailFragment
     private String pendingVideoOccurrenceId;
     @Nullable
     private String pendingVideoInitialPlayerOccurrenceId;
-    private boolean pendingVideoPlayerIntentObserved;
+    @Nullable
+    private String pendingVideoInitialPlayerIntentToken;
+
+    /**
+     * Saved-state identity for a live queue, including ordinary queues. A local Binder survives
+     * rotation/parceling as the same object, but cannot be recovered as this class after process
+     * death. Do not serialize PlayQueue or add persisted identity to its serialization contract.
+     */
+    private static final class PendingVideoQueueReference extends Binder {
+        @Nullable
+        private final PlayQueue queue;
+
+        PendingVideoQueueReference(@Nullable final PlayQueue queue) {
+            this.queue = queue;
+        }
+    }
 
     @Nullable
     private StreamInfo currentInfo = null;
@@ -394,7 +410,12 @@ public class VideoDetailFragment
         outState.putString("pendingVideoOccurrenceId", pendingVideoOccurrenceId);
         outState.putString("pendingVideoInitialPlayerOccurrenceId",
                 pendingVideoInitialPlayerOccurrenceId);
-        outState.putBoolean("pendingVideoPlayerIntentObserved", pendingVideoPlayerIntentObserved);
+        outState.putString("pendingVideoInitialPlayerIntentToken",
+                pendingVideoInitialPlayerIntentToken);
+        if (pendingVideoOpen) {
+            outState.putBinder("pendingVideoQueueReference",
+                    new PendingVideoQueueReference(pendingVideoQueue));
+        }
     }
 
     @Override
@@ -415,8 +436,19 @@ public class VideoDetailFragment
         pendingVideoOccurrenceId = savedInstanceState.getString("pendingVideoOccurrenceId");
         pendingVideoInitialPlayerOccurrenceId = savedInstanceState.getString(
                 "pendingVideoInitialPlayerOccurrenceId");
-        pendingVideoPlayerIntentObserved = savedInstanceState.getBoolean(
-                "pendingVideoPlayerIntentObserved", false);
+        pendingVideoInitialPlayerIntentToken = savedInstanceState.getString(
+                "pendingVideoInitialPlayerIntentToken");
+        if (pendingVideoOpen) {
+            final var reference = savedInstanceState.getBinder("pendingVideoQueueReference");
+            if (reference instanceof PendingVideoQueueReference) {
+                pendingVideoQueue = ((PendingVideoQueueReference) reference).queue;
+                playQueue = pendingVideoQueue;
+            } else {
+                // A process restart must restore the queue paused, never a pending autoplay.
+                cancelPendingVideoOpen();
+                setAutoPlay(false);
+            }
+        }
     }
 
     @Override
@@ -1590,8 +1622,8 @@ public class VideoDetailFragment
             final PlayQueue playerQueue = player == null ? null : player.getPlayQueue();
             pendingVideoInitialPlayerOccurrenceId = playerQueue == null || playerQueue.getItem() == null
                     ? null : playerQueue.getItem().getUuid();
-            pendingVideoPlayerIntentObserved = false;
-            observePendingVideoPlayerIntent();
+            pendingVideoInitialPlayerIntentToken = player == null ? null
+                    : player.getPlayWhenReadyChangeToken(pendingVideoOccurrenceId);
             return;
         }
         cancelPendingVideoOpen();
@@ -1621,11 +1653,10 @@ public class VideoDetailFragment
                 || !isPendingVideoInfo(currentInfo)) {
             return false;
         }
-        observePendingVideoPlayerIntent();
         // Follow transport controls only for the intended occurrence. An explicit Play for B
         // must not inherit paused A's state, even when both use the same player service.
         if (isPendingVideoPlayerOccurrence() && (pendingVideoFollowsQueue
-                || pendingVideoPlayerIntentObserved
+                || hasPendingVideoPlayerIntentChanged()
                 || !Objects.equals(pendingVideoInitialPlayerOccurrenceId, pendingVideoOccurrenceId))) {
             setAutoPlay(player.getPlayWhenReady());
         }
@@ -1653,11 +1684,9 @@ public class VideoDetailFragment
                 && pendingVideoOccurrenceId.equals(player.getPlayQueue().getItem().getUuid());
     }
 
-    private void observePendingVideoPlayerIntent() {
-        if (pendingVideoOpen && isPendingVideoPlayerOccurrence()
-                && player.getPlayWhenReady() == autoPlayEnabled) {
-            pendingVideoPlayerIntentObserved = true;
-        }
+    private boolean hasPendingVideoPlayerIntentChanged() {
+        final String token = player.getPlayWhenReadyChangeToken(pendingVideoOccurrenceId);
+        return token != null && !token.equals(pendingVideoInitialPlayerIntentToken);
     }
 
     /** Returns whether this is the queue/occurrence targeted by the outstanding request. */
@@ -1667,6 +1696,10 @@ public class VideoDetailFragment
         }
         final PlayerMediaItem item = queue.getItem();
         if (queue != pendingVideoQueue) {
+            if (pendingVideoFollowsQueue && pendingVideoQueue != null) {
+                // A switch belongs to the live queue, not a copy with matching URLs/UUIDs.
+                return false;
+            }
             if (item == null) {
                 return false;
             }
@@ -1715,7 +1748,7 @@ public class VideoDetailFragment
         pendingVideoOccurrenceId = null;
         pendingVideoInitialPlayerOccurrenceId = null;
         pendingVideoFollowsQueue = false;
-        pendingVideoPlayerIntentObserved = false;
+        pendingVideoInitialPlayerIntentToken = null;
     }
 
     private void invalidateVideoSelection() {
@@ -2485,7 +2518,6 @@ public class VideoDetailFragment
                                  final RepeatMode repeatMode,
                                  final boolean shuffled,
                                  final PlayerPlaybackParameters parameters) {
-        observePendingVideoPlayerIntent();
         setOverlayPlayPauseImage(player != null && player.isPlaying());
 
         switch (state) {
