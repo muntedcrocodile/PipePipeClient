@@ -142,6 +142,60 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void playerMetadataCompletesAnExplicitPendingVideoOpenOnce() {
+        onMain(() -> org.schabi.newpipe.player.helper.PlayerHolder.getInstance().stopService());
+        final Activity launched = InstrumentationRegistry.getInstrumentation().startActivitySync(
+                new Intent(context, org.schabi.newpipe.MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            onMain(() -> {
+                final var activity = (FragmentActivity) launched;
+                final var queue = new org.schabi.newpipe.player.playqueue.SinglePlayQueue(video("pending"));
+                // The collapsed fragment has no initial URL and does not start network extraction.
+                final var fragment = org.schabi.newpipe.fragments.detail.VideoDetailFragment
+                        .getInstanceInCollapsedState();
+                final var manager = activity.getSupportFragmentManager();
+                manager.beginTransaction().replace(R.id.fragment_player_holder, fragment).commitNow();
+                try {
+                    final Class<?> type = fragment.getClass();
+                    final Field queueField = type.getDeclaredField("playQueue");
+                    final Field pending = type.getDeclaredField("pendingVideoOpen");
+                    final Field autoplay = type.getDeclaredField("autoPlayEnabled");
+                    queueField.setAccessible(true);
+                    pending.setAccessible(true);
+                    autoplay.setAccessible(true);
+                    queueField.set(fragment, queue);
+                    fragment.setAutoPlay(true);
+                    fragment.openVideoPlayer(true);
+                    assertEquals(true, pending.getBoolean(fragment));
+                    final var info = new org.schabi.newpipe.extractor.stream.StreamInfo(
+                            0, "https://example.com/pending", "https://example.com/pending",
+                            StreamType.VIDEO_STREAM, "pending", "pending", 0);
+                    info.setUploaderName("test uploader");
+                    info.setThumbnailUrl("");
+                    fragment.onMetadataUpdate(info, queue);
+                    assertEquals("Player-delivered metadata must complete the pending open",
+                            false, pending.getBoolean(fragment));
+                    assertEquals("Metadata must retain the explicit playback request",
+                            true, autoplay.getBoolean(fragment));
+                    fragment.onMetadataUpdate(info, queue);
+                    assertEquals(false, pending.getBoolean(fragment));
+                } catch (final ReflectiveOperationException error) {
+                    throw new AssertionError(error);
+                } finally {
+                    manager.beginTransaction().remove(fragment).commitNow();
+                }
+            });
+        } finally {
+            onMain(() -> {
+                launched.finish();
+                org.schabi.newpipe.player.helper.PlayerHolder.getInstance().stopService();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        }
+    }
+
+    @Test
     public void queueLinkFromStandaloneBookmarksUsesActivityContainer() {
         assertQueueLinkNavigation(false);
     }
