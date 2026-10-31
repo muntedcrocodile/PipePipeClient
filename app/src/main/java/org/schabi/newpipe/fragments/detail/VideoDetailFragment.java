@@ -222,6 +222,8 @@ public final class VideoDetailFragment
     protected PlayQueue playQueue = null;
     int bottomSheetState = BottomSheetBehavior.STATE_EXPANDED;
     protected boolean autoPlayEnabled = true;
+    private boolean pendingVideoOpen;
+    private boolean pendingVideoFullscreen;
 
     @Nullable
     private StreamInfo currentInfo = null;
@@ -366,6 +368,8 @@ public final class VideoDetailFragment
         outState.putString("url", url);
         outState.putInt("bottomSheetState", sanitizeBottomSheetState(bottomSheetState));
         outState.putBoolean("autoPlayEnabled", autoPlayEnabled);
+        outState.putBoolean("pendingVideoOpen", pendingVideoOpen);
+        outState.putBoolean("pendingVideoFullscreen", pendingVideoFullscreen);
     }
 
     @Override
@@ -377,6 +381,8 @@ public final class VideoDetailFragment
         bottomSheetState = sanitizeBottomSheetState(savedInstanceState.getInt(
                 "bottomSheetState", BottomSheetBehavior.STATE_EXPANDED));
         autoPlayEnabled = savedInstanceState.getBoolean("autoPlayEnabled", true);
+        pendingVideoOpen = savedInstanceState.getBoolean("pendingVideoOpen", false);
+        pendingVideoFullscreen = savedInstanceState.getBoolean("pendingVideoFullscreen", false);
     }
 
     @Override
@@ -1100,7 +1106,11 @@ public final class VideoDetailFragment
                         }
                     }
 
-                    if (isAutoplayEnabled()) {
+                    if (pendingVideoOpen) {
+                        final boolean fullscreen = pendingVideoFullscreen;
+                        pendingVideoOpen = false;
+                        openVideoPlayer(fullscreen);
+                    } else if (isAutoplayEnabled()) {
                         openVideoPlayerAutoFullscreen();
                     }
                 }, throwable -> showError(new ErrorInfo(throwable, UserAction.REQUESTED_STREAM,
@@ -1485,6 +1495,14 @@ public final class VideoDetailFragment
      * @param directlyFullscreenIfApplicable whether to request fullscreen directly
      */
     public void openVideoPlayer(final boolean directlyFullscreenIfApplicable) {
+        if (currentInfo == null) {
+            // Explicit playback (including first enqueue) can arrive before detail extraction.
+            // Bind/attach only once metadata is ready, rather than losing this request or
+            // interpreting a not-yet-ready player as paused during service reconnection.
+            pendingVideoOpen = true;
+            pendingVideoFullscreen = directlyFullscreenIfApplicable;
+            return;
+        }
         if (directlyFullscreenIfApplicable) {
             // Make sure the bottom sheet turns out expanded. When this code kicks in the bottom
             // sheet could not have fully expanded yet, and thus be in the STATE_SETTLING state.
@@ -1567,7 +1585,7 @@ public final class VideoDetailFragment
         }
 
         removeVideoPlayerView();
-        if (isAutoplayEnabled()) {
+        if (pendingVideoOpen || isAutoplayEnabled()) {
             playerService.stopForImmediateReusing();
             playerService.getView().setVisibility(View.GONE);
         } else {

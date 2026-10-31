@@ -119,6 +119,29 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void explicitVideoOpenWaitsForMetadataWithoutStartingAnUnattachedService() {
+        onMain(() -> {
+            final var fragment = new org.schabi.newpipe.fragments.detail.VideoDetailFragment();
+            // No metadata, activity or service yet: an explicit request must survive this
+            // startup order instead of trying to bind before extraction has completed.
+            fragment.openVideoPlayer(true);
+            try {
+                final Field pending = fragment.getClass().getDeclaredField("pendingVideoOpen");
+                final Field fullscreen = fragment.getClass().getDeclaredField("pendingVideoFullscreen");
+                pending.setAccessible(true);
+                fullscreen.setAccessible(true);
+                assertEquals(true, pending.getBoolean(fragment));
+                assertEquals(true, fullscreen.getBoolean(fragment));
+                fragment.openVideoPlayer(false);
+                assertEquals(true, pending.getBoolean(fragment));
+                assertEquals(false, fullscreen.getBoolean(fragment));
+            } catch (final ReflectiveOperationException error) {
+                throw new AssertionError(error);
+            }
+        });
+    }
+
+    @Test
     public void queueLinkFromStandaloneBookmarksUsesActivityContainer() {
         assertQueueLinkNavigation(false);
     }
