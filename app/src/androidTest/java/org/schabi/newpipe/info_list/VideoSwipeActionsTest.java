@@ -472,6 +472,33 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void pauseCheckpointsOnlyTheCurrentOccurrenceAfterHeadRemoval() {
+        for (final boolean duplicate : new boolean[]{false, true}) {
+            withVideoOpen(fixture -> {
+                final String next = duplicate ? "A" : "B";
+                fixture.prepareColdQueue("A", next);
+                fixture.connectBufferingPlayer();
+                final PlayQueue queue = fixture.queue();
+                fixture.setPlayerMetadata(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                        .forStreamInfo(fixture.info("A")).withUuid(queue.getItem().getUuid()));
+                queue.setRecovery(1, 42_000L);
+                queue.remove(0);
+
+                // Queue and ExoPlayer indices are both zero, but metadata is still the old head.
+                fixture.player.playPause();
+                assertEquals(42_000L, queue.getRecoveryPosition(0));
+
+                // Matching metadata must still checkpoint the actual new occurrence's position.
+                fixture.setPlayerMetadata(org.schabi.newpipe.player.mediaitem.PlayerMediaItem
+                        .forStreamInfo(fixture.info(next)).withUuid(queue.getItem().getUuid()));
+                fixture.exo.seekTo(13_000L);
+                fixture.player.saveStreamProgressState();
+                assertEquals(13_000L, queue.getRecoveryPosition(0));
+            });
+        }
+    }
+
+    @Test
     public void recreatedBackgroundSwitchFollowsTheLiveQueuesAdvancedHead() {
         assertRecreatedSwitchFollowsNext(false);
     }
