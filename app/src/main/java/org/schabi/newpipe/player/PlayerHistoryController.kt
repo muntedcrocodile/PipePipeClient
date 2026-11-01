@@ -57,12 +57,14 @@ class PlayerHistoryController(private val player: Player) {
 
     fun saveStreamProgressState() {
         val playQueue = player.playQueue
-        if (player.exoPlayerIsNull() || player.currentMetadata == null || playQueue == null
+        val metadata = player.currentMetadata
+        if (player.exoPlayerIsNull() || metadata == null || playQueue == null
             || playQueue.index != player.simpleExoPlayer.currentMediaItemIndex
+            || metadata.uuid != playQueue.getItem()?.uuid
         ) {
-            // Make sure play queue and current window index are equal, to prevent saving state for
-            // the wrong stream on discontinuity (e.g. when the stream just changed but the
-            // playQueue index and currentMetadata still haven't updated)
+            // Removing the head can leave both indices at zero while ExoPlayer still reports
+            // the previous occurrence. Its position must not replace the new head's recovery,
+            // including when both occurrences have the same URL.
             return
         }
         // Save current position. It will help to restore this position once a user
