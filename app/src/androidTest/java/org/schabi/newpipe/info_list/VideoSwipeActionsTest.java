@@ -1115,6 +1115,20 @@ public class VideoSwipeActionsTest {
             prefs.edit().putString("video_swipe_left_action", "none")
                     .putString("video_swipe_right_action", "none").commit();
         }
+        final PullResult control = runVerticalPullRefresh(false);
+        final PullResult guarded = runVerticalPullRefresh(true);
+        final String diagnostics = "\nWITHOUT GUARD: " + control + "\nWITH GUARD: " + guarded;
+        assertEquals("The unguarded hierarchy must support a vertical pull" + diagnostics,
+                1, control.refreshes);
+        assertEquals("A vertical pull beginning on a video must reach refresh" + diagnostics,
+                1, guarded.refreshes);
+        assertEquals("Control pull must not enqueue a row" + diagnostics, 0, control.submitted);
+        assertEquals("Guarded pull must not enqueue a row" + diagnostics, 0, guarded.submitted);
+    }
+
+    private PullResult runVerticalPullRefresh(final boolean protectGesture) {
+        final PullResult result = new PullResult();
+        final PullTrace trace = result.trace;
         withActivity(activity -> {
             final SwipeFixture[] fixture = new SwipeFixture[1];
             final androidx.viewpager.widget.ViewPager[] pager = new androidx.viewpager.widget.ViewPager[1];
@@ -1125,15 +1139,32 @@ public class VideoSwipeActionsTest {
                 fixture[0] = new SwipeFixture(activity, false);
                 final SourceFragment fragment = new SourceFragment();
                 activity.getSupportFragmentManager().beginTransaction().add(fragment, null).commitNow();
-                final var refresh = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(activity);
+                final var refresh = new TracedSwipeRefresh(activity, trace);
                 refreshLayout[0] = refresh;
                 refresh.addView(fixture[0].list);
                 refresh.setOnRefreshListener(() -> refreshes[0]++);
-                VideoSwipeActions.protectTabGesture(fragment, fixture[0].list,
-                        position -> position >= 0 && position < fixture[0].rows.size()
-                                ? fixture[0].rows.get(position) : null);
+                if (protectGesture) {
+                    VideoSwipeActions.protectTabGesture(fragment, fixture[0].list, position -> {
+                        trace.add("guard.resolve position=" + position);
+                        return position >= 0 && position < fixture[0].rows.size()
+                                ? fixture[0].rows.get(position) : null;
+                    });
+                }
+                fixture[0].list.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
+                    @Override public boolean onInterceptTouchEvent(final RecyclerView list,
+                                                                  final android.view.MotionEvent event) {
+                        trace.add("list " + event.getActionMasked() + " y=" + event.getY()
+                                + " scroll=" + list.getScrollState()
+                                + " nested=" + list.hasNestedScrollingParent(0));
+                        return false;
+                    }
+
+                    @Override public void onRequestDisallowInterceptTouchEvent(final boolean disallow) {
+                        trace.add("list.disallow=" + disallow);
+                    }
+                });
                 new ItemTouchHelper(fixture[0].callback).attachToRecyclerView(fixture[0].list);
-                pager[0] = new androidx.viewpager.widget.ViewPager(activity);
+                pager[0] = new TracedPager(activity, trace);
                 pager[0].setAdapter(new androidx.viewpager.widget.PagerAdapter() {
                     @Override public int getCount() { return 1; }
                     @Override public boolean isViewFromObject(final View view, final Object object) {
@@ -1180,14 +1211,21 @@ public class VideoSwipeActionsTest {
                 final float startY = rowLocation[1] - pagerLocation[1] + row.getHeight() / 2f;
                 final float distance = pager[0].getHeight() * 0.75f;
                 assertEquals(true, startY > 0 && startY + distance < pager[0].getHeight());
+                trace.always("geometry pager=" + pager[0].getWidth() + "x" + pager[0].getHeight()
+                        + " refresh=" + refreshLayout[0].getWidth() + "x" + refreshLayout[0].getHeight()
+                        + " list=" + fixture[0].list.getWidth() + "x" + fixture[0].list.getHeight()
+                        + " x=" + x + " y=" + startY + " distance=" + distance);
                 final long down = android.os.SystemClock.uptimeMillis();
                 for (int i = 0; i <= 24; i++) {
+                    trace.step = i;
                     final int action = i == 0 ? android.view.MotionEvent.ACTION_DOWN
                             : i == 24 ? android.view.MotionEvent.ACTION_UP
                             : android.view.MotionEvent.ACTION_MOVE;
                     final var event = android.view.MotionEvent.obtain(down, down + i * 16L,
                             action, x, startY + distance * i / 24f, 0);
-                    pager[0].dispatchTouchEvent(event);
+                    final boolean handled = pager[0].dispatchTouchEvent(event);
+                    trace.add("root.handled=" + handled + " "
+                            + ((TracedSwipeRefresh) refreshLayout[0]).state());
                     event.recycle();
                 }
             });
@@ -1199,10 +1237,118 @@ public class VideoSwipeActionsTest {
                 if (actual[0] != 0) break;
                 android.os.SystemClock.sleep(25);
             } while (android.os.SystemClock.uptimeMillis() < deadline);
-            assertEquals("A vertical pull beginning on a video must reach refresh", 1, actual[0]);
-            onMain(() -> assertEquals("Vertical pulls must not enqueue a row", 0,
-                    fixture[0].context.submitted.size()));
+            onMain(() -> {
+                result.refreshes = refreshes[0];
+                result.submitted = fixture[0].context.submitted.size();
+                trace.always("after settle " + ((TracedSwipeRefresh) refreshLayout[0]).state());
+            });
         });
+        return result;
+    }
+
+    private static final class PullResult {
+        private final PullTrace trace = new PullTrace();
+        private int refreshes;
+        private int submitted;
+
+        @Override public String toString() { return "callbacks=" + refreshes + " " + trace.events; }
+    }
+
+    /** Bounded temporary diagnostics, sampled at DOWN, early/late MOVE and UP. */
+    private static final class PullTrace {
+        private final List<String> events = new ArrayList<>();
+        private int step;
+
+        void add(final String event) {
+            if (step <= 2 || step == 12 || step >= 23) always(event);
+        }
+
+        void always(final String event) {
+            if (events.size() < 160) events.add(step + ":" + event);
+        }
+    }
+
+    private static final class TracedPager extends androidx.viewpager.widget.ViewPager {
+        private final PullTrace trace;
+
+        TracedPager(final Context context, final PullTrace trace) { super(context); this.trace = trace; }
+
+        @Override public boolean onInterceptTouchEvent(final android.view.MotionEvent event) {
+            final boolean intercept = super.onInterceptTouchEvent(event);
+            trace.add("pager.intercept " + event.getActionMasked() + "=" + intercept
+                    + " drag=" + readField(this, "mIsBeingDragged")
+                    + " unable=" + readField(this, "mIsUnableToDrag"));
+            return intercept;
+        }
+
+        @Override public boolean onTouchEvent(final android.view.MotionEvent event) {
+            final boolean handled = super.onTouchEvent(event);
+            trace.add("pager.touch " + event.getActionMasked() + "=" + handled);
+            return handled;
+        }
+
+        @Override public void requestDisallowInterceptTouchEvent(final boolean disallow) {
+            super.requestDisallowInterceptTouchEvent(disallow);
+            if (trace != null) trace.add("pager.disallow=" + disallow);
+        }
+    }
+
+    private static final class TracedSwipeRefresh extends androidx.swiperefreshlayout.widget.SwipeRefreshLayout {
+        private final PullTrace trace;
+
+        TracedSwipeRefresh(final Context context, final PullTrace trace) { super(context); this.trace = trace; }
+
+        String state() {
+            return "refresh=" + isRefreshing() + " drag=" + readField(this, "mIsBeingDragged")
+                    + " nested=" + readField(this, "mNestedScrollInProgress")
+                    + " unconsumed=" + readField(this, "mTotalUnconsumed")
+                    + " threshold=" + readField(this, "mTotalDragDistance")
+                    + " pointer=" + readField(this, "mActivePointerId")
+                    + " up=" + canChildScrollUp();
+        }
+
+        @Override public boolean onInterceptTouchEvent(final android.view.MotionEvent event) {
+            final boolean intercept = super.onInterceptTouchEvent(event);
+            trace.add("refresh.intercept " + event.getActionMasked() + "=" + intercept + " " + state());
+            return intercept;
+        }
+
+        @Override public boolean onTouchEvent(final android.view.MotionEvent event) {
+            final boolean handled = super.onTouchEvent(event);
+            trace.add("refresh.touch " + event.getActionMasked() + "=" + handled + " " + state());
+            return handled;
+        }
+
+        @Override public void requestDisallowInterceptTouchEvent(final boolean disallow) {
+            super.requestDisallowInterceptTouchEvent(disallow);
+            if (trace != null) trace.add("refresh.disallow=" + disallow);
+        }
+
+        @Override public void onNestedScrollAccepted(final View child, final View target,
+                                                      final int axes, final int type) {
+            super.onNestedScrollAccepted(child, target, axes, type);
+            trace.add("refresh.nestedAccepted type=" + type + " axes=" + axes + " " + state());
+        }
+
+        @Override public void onNestedScroll(final View target, final int dxConsumed, final int dyConsumed,
+                                             final int dxUnconsumed, final int dyUnconsumed, final int type,
+                                             final int[] consumed) {
+            super.onNestedScroll(target, dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed, type, consumed);
+            trace.add("refresh.nestedScroll type=" + type + " dy=" + dyConsumed
+                    + " remaining=" + dyUnconsumed + " consumedY=" + consumed[1] + " " + state());
+        }
+
+        @Override public void onNestedPreScroll(final View target, final int dx, final int dy,
+                                                final int[] consumed, final int type) {
+            super.onNestedPreScroll(target, dx, dy, consumed, type);
+            trace.add("refresh.nestedPre type=" + type + " dy=" + dy
+                    + " consumedY=" + consumed[1] + " " + state());
+        }
+
+        @Override public void onStopNestedScroll(final View target, final int type) {
+            super.onStopNestedScroll(target, type);
+            trace.always("refresh.nestedStop type=" + type + " " + state());
+        }
     }
 
     private static void awaitOnMain(final String message,
