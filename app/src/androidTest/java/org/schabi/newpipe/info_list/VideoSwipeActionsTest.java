@@ -196,23 +196,35 @@ public class VideoSwipeActionsTest {
     @Test
     public void retainedDetailViewModelKeepsPausedTransportWithoutNewPlaybackIntent() {
         withVideoOpen(fixture -> {
-            fixture.connectBufferingPlayer();
-            fixture.requestExplicitPlayback();
-            fixture.complete(fixture.info("A"), fixture.generation());
-            fixture.assertOpened("A", true);
-            fixture.player.playPause();
-            assertEquals(false, fixture.player.getPlayWhenReady());
-            final Object retained = readField(fixture.fragment, "vm");
+            final String key = context.getString(R.string.autoplay_key);
+            final boolean had = prefs.contains(key);
+            final String old = prefs.getString(key, null);
+            try {
+                // The old retained-info branch must attempt autoplay regardless of Wi-Fi state.
+                prefs.edit().putString(key,
+                        context.getString(R.string.autoplay_always_key)).commit();
+                fixture.connectBufferingPlayer();
+                fixture.requestExplicitPlayback();
+                fixture.complete(fixture.info("A"), fixture.generation());
+                fixture.assertOpened("A", true);
+                fixture.player.playPause();
+                assertEquals(false, fixture.player.getPlayWhenReady());
+                final Object retained = readField(fixture.fragment, "vm");
 
-            fixture.recreateRetainingViewModel();
-            assertSame(retained, readField(fixture.fragment, "vm"));
-            // Rebinding reports matching metadata, so the autoplay flag is still true.
-            fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
-            assertEquals(true, readField(fixture.fragment, "autoPlayEnabled"));
-            fixture.fragment.restoreRetainedView();
-            assertEquals("Retained-info rendering must not send PLAY_WHEN_READY=true",
-                    1, fixture.activity.intents.size());
-            assertEquals(false, fixture.player.getPlayWhenReady());
+                fixture.recreateRetainingViewModel();
+                assertSame(retained, readField(fixture.fragment, "vm"));
+                // Rebinding reports matching metadata, so the autoplay flag is still true.
+                fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+                assertEquals(true, readField(fixture.fragment, "autoPlayEnabled"));
+                fixture.fragment.restoreRetainedView();
+                assertEquals("Retained-info rendering must not send PLAY_WHEN_READY=true",
+                        1, fixture.activity.intents.size());
+                assertEquals(false, fixture.player.getPlayWhenReady());
+            } finally {
+                final var editor = prefs.edit();
+                if (had) editor.putString(key, old); else editor.remove(key);
+                editor.commit();
+            }
         });
     }
 
