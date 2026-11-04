@@ -1,5 +1,6 @@
 package org.schabi.newpipe.fragments.list.kiosk;
 
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -11,6 +12,8 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
+import androidx.preference.PreferenceManager;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.error.ErrorInfo;
@@ -61,6 +64,8 @@ public class KioskFragment extends BaseListInfoFragment<StreamInfoItem, KioskInf
     String kioskId = "";
     String kioskTranslatedName;
     ContentCountry contentCountry;
+    @Nullable
+    private SwipeRefreshLayout swipeRefreshLayout;
 
     /*//////////////////////////////////////////////////////////////////////////
     // Views
@@ -117,6 +122,7 @@ public class KioskFragment extends BaseListInfoFragment<StreamInfoItem, KioskInf
     @Override
     public void onResume() {
         super.onResume();
+        updatePullToRefreshState();
         if (!Localization.getPreferredContentCountry(requireContext()).equals(contentCountry)) {
             reloadContent();
         }
@@ -134,6 +140,82 @@ public class KioskFragment extends BaseListInfoFragment<StreamInfoItem, KioskInf
                              @Nullable final ViewGroup container,
                              @Nullable final Bundle savedInstanceState) {
         return inflater.inflate(R.layout.fragment_kiosk, container, false);
+    }
+
+    @Override
+    protected void initViews(final View rootView, final Bundle savedInstanceState) {
+        super.initViews(rootView, savedInstanceState);
+        swipeRefreshLayout = rootView.findViewById(R.id.swipe_refresh_layout);
+        updatePullToRefreshState();
+    }
+
+    @Override
+    protected void initListeners() {
+        super.initListeners();
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            if (!isLoading.get()) {
+                // BaseStateFragment.reloadContent() forces a fresh extraction, bypassing InfoCache.
+                reloadContent();
+            } else {
+                stopRefreshing();
+            }
+        });
+    }
+
+    private void updatePullToRefreshState() {
+        if (swipeRefreshLayout != null && isAdded()) {
+            swipeRefreshLayout.setEnabled(PreferenceManager.getDefaultSharedPreferences(
+                    requireContext()).getBoolean(getString(R.string.pull_to_refresh_key), true));
+        }
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(final SharedPreferences preferences, final String key) {
+        super.onSharedPreferenceChanged(preferences, key);
+        if (isAdded() && getString(R.string.pull_to_refresh_key).equals(key)) {
+            updatePullToRefreshState();
+        }
+    }
+
+    private void stopRefreshing() {
+        if (swipeRefreshLayout != null) {
+            swipeRefreshLayout.setRefreshing(false);
+        }
+    }
+
+    @Override
+    public void hideLoading() {
+        super.hideLoading();
+        stopRefreshing();
+    }
+
+    @Override
+    public void showEmptyState() {
+        super.showEmptyState();
+        stopRefreshing();
+    }
+
+    @Override
+    public void handleError() {
+        super.handleError();
+        stopRefreshing();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // The inherited pause callback disposes the current extraction.
+        stopRefreshing();
+    }
+
+    @Override
+    public void onDestroyView() {
+        stopRefreshing();
+        if (swipeRefreshLayout != null) {
+            swipeRefreshLayout.setOnRefreshListener(null);
+            swipeRefreshLayout = null;
+        }
+        super.onDestroyView();
     }
 
     /*//////////////////////////////////////////////////////////////////////////
