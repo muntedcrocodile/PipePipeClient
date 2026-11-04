@@ -1118,12 +1118,15 @@ public class VideoSwipeActionsTest {
         withActivity(activity -> {
             final SwipeFixture[] fixture = new SwipeFixture[1];
             final androidx.viewpager.widget.ViewPager[] pager = new androidx.viewpager.widget.ViewPager[1];
+            final androidx.swiperefreshlayout.widget.SwipeRefreshLayout[] refreshLayout =
+                    new androidx.swiperefreshlayout.widget.SwipeRefreshLayout[1];
             final int[] refreshes = {0};
             onMain(() -> {
                 fixture[0] = new SwipeFixture(activity, false);
                 final SourceFragment fragment = new SourceFragment();
                 activity.getSupportFragmentManager().beginTransaction().add(fragment, null).commitNow();
                 final var refresh = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(activity);
+                refreshLayout[0] = refresh;
                 refresh.addView(fixture[0].list);
                 refresh.setOnRefreshListener(() -> refreshes[0]++);
                 VideoSwipeActions.protectTabGesture(fragment, fixture[0].list,
@@ -1148,7 +1151,26 @@ public class VideoSwipeActionsTest {
                 activity.setContentView(pager[0]);
             });
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            // SwipeFixture premeasures its list, so a row holder can exist before ViewPager's
+            // first traversal has even instantiated the page. Idle is not a future-frame barrier.
+            awaitOnMain("ViewPager must attach and lay out the refresh page before the pull", () -> {
+                final RecyclerView list = fixture[0].list;
+                final RecyclerView.ViewHolder row = list.findViewHolderForAdapterPosition(0);
+                return pager[0].isAttachedToWindow() && pager[0].isLaidOut()
+                        && !pager[0].isLayoutRequested() && pager[0].getWidth() > 0
+                        && pager[0].getHeight() > 0 && refreshLayout[0].getParent() == pager[0]
+                        && refreshLayout[0].isLaidOut() && !refreshLayout[0].isLayoutRequested()
+                        && list.isLaidOut() && !list.isLayoutRequested()
+                        && list.getWidth() > 0 && list.getHeight() > 0
+                        && row != null && row.itemView.isShown() && row.itemView.getHeight() > 0;
+            });
             onMain(() -> {
+                assertEquals(0, pager[0].getCurrentItem());
+                assertEquals(0, pager[0].getScrollX());
+                assertEquals(RecyclerView.SCROLL_STATE_IDLE, fixture[0].list.getScrollState());
+                assertEquals(false, fixture[0].list.canScrollVertically(-1));
+                assertEquals(true, refreshLayout[0].isEnabled());
+                assertEquals(false, refreshLayout[0].isRefreshing());
                 final View row = fixture[0].list.findViewHolderForAdapterPosition(0).itemView;
                 final int[] rowLocation = new int[2];
                 final int[] pagerLocation = new int[2];
@@ -1157,6 +1179,7 @@ public class VideoSwipeActionsTest {
                 final float x = rowLocation[0] - pagerLocation[0] + row.getWidth() / 2f;
                 final float startY = rowLocation[1] - pagerLocation[1] + row.getHeight() / 2f;
                 final float distance = pager[0].getHeight() * 0.75f;
+                assertEquals(true, startY > 0 && startY + distance < pager[0].getHeight());
                 final long down = android.os.SystemClock.uptimeMillis();
                 for (int i = 0; i <= 24; i++) {
                     final int action = i == 0 ? android.view.MotionEvent.ACTION_DOWN
@@ -1180,6 +1203,18 @@ public class VideoSwipeActionsTest {
             onMain(() -> assertEquals("Vertical pulls must not enqueue a row", 0,
                     fixture[0].context.submitted.size()));
         });
+    }
+
+    private static void awaitOnMain(final String message,
+                                    final java.util.function.BooleanSupplier condition) {
+        final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
+        final boolean[] ready = {false};
+        do {
+            onMain(() -> ready[0] = condition.getAsBoolean());
+            if (ready[0]) return;
+            android.os.SystemClock.sleep(25);
+        } while (android.os.SystemClock.uptimeMillis() < deadline);
+        onMain(() -> assertEquals(message, true, condition.getAsBoolean()));
     }
 
     @Test

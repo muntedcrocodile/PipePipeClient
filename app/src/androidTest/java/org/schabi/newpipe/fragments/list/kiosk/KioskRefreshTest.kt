@@ -84,6 +84,10 @@ class KioskRefreshTest {
         onMain {
             assertFalse(fragment.refresh().isRefreshing)
             assertTrue(fragment.requireView().findViewById<View>(R.id.error_retry_button).performClick())
+        }
+        // ErrorPanelHelper debounces real retry clicks for 300 ms before invoking reloadContent.
+        await { fragment.loads.size == 3 }
+        onMain {
             assertEquals(3, fragment.loads.size)
             assertTrue(fragment.loads.last().force)
         }
