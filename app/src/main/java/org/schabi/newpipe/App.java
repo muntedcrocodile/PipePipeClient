@@ -28,6 +28,8 @@ import org.schabi.newpipe.extractor.services.youtube.YoutubeApiDecoder;
 import org.schabi.newpipe.ktx.ExceptionUtils;
 import org.schabi.newpipe.plugin.PluginManager;
 import org.schabi.newpipe.settings.NewPipeSettings;
+import org.schabi.newpipe.settings.ScheduledBackupWorker;
+import org.schabi.newpipe.sync.DebugSync;
 import org.schabi.newpipe.util.*;
 import org.schabi.newpipe.util.dearrow.DeArrowImages;
 import org.schabi.newpipe.youtube.LocalDomPoTokenProvider;
@@ -162,6 +164,10 @@ public class App extends MultiDexApplication {
                 && prefs.getBoolean(getString(R.string.show_image_indicators_key), false));
 
         configureRxJavaErrorHandler();
+
+        ScheduledBackupWorker.schedule(this);
+        // not gated on DEBUG: only the settings entry is debug-only
+        DebugSync.schedule(this, false);
     }
 
     public static void reconcileYoutubePlayerClient(@NonNull final Context context) {

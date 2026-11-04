@@ -295,7 +295,6 @@
         <item>@string/remote_search_suggestions</item>
     </string-array>
     <string name="playback_adjust_by_semitones_key">playback_adjust_by_semitones_key</string>
-    <string name="show_play_with_kodi_key">show_play_with_kodi</string>
     <string name="show_comments_key">show_comments</string>
     <string name="show_next_video_key">show_next_video</string>
     <string name="show_description_key">show_description</string>
@@ -1887,4 +1886,25 @@
     <string name="plugins_enabled_key" translatable="false">plugins_enabled</string>
     <string name="plugins_settings_key" translatable="false">plugins_settings</string>
     <string name="plugins_show_nsfw_key" translatable="false">plugins_show_nsfw</string>
+    <string name="cast_receiver_enabled_key" translatable="false">cast_receiver_enabled</string>
+    <string name="scheduled_backup_key" translatable="false">scheduled_backup</string>
+    <string name="scheduled_backup_path_key" translatable="false">scheduled_backup_path</string>
+    <string name="scheduled_backup_interval_key" translatable="false">scheduled_backup_interval</string>
+    <string name="scheduled_backup_interval_default" translatable="false">86400</string>
+    <string-array name="scheduled_backup_interval_description" translatable="false">
+        <item>12 hours</item>
+        <item>1 day</item>
+        <item>3 days</item>
+        <item>7 days</item>
+    </string-array>
+    <string-array name="scheduled_backup_interval_values" translatable="false">
+        <item>43200</item>
+        <item>86400</item>
+        <item>259200</item>
+        <item>604800</item>
+    </string-array>
+    <string name="debug_sync_server_key" translatable="false">debug_sync_server</string>
+    <string name="import_settings_only_key" translatable="false">import_settings_only</string>
+    <string name="export_settings_only_key" translatable="false">export_settings_only</string>
+    <string name="reset_settings_key" translatable="false">reset_settings</string>
 </resources>

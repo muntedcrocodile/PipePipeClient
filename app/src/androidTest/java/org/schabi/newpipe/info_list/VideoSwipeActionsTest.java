@@ -158,13 +158,11 @@ public class VideoSwipeActionsTest {
                 manager.beginTransaction().replace(R.id.fragment_player_holder, fragment).commitNow();
                 try {
                     final Class<?> type = fragment.getClass();
-                    final Field queueField = type.getDeclaredField("playQueue");
                     final Field pending = type.getDeclaredField("pendingVideoOpen");
                     final Field autoplay = type.getDeclaredField("autoPlayEnabled");
-                    queueField.setAccessible(true);
                     pending.setAccessible(true);
                     autoplay.setAccessible(true);
-                    queueField.set(fragment, queue);
+                    writeField(fragment, "playQueue", queue);
                     fragment.setAutoPlay(true);
                     fragment.openVideoPlayer(true);
                     assertEquals(true, pending.getBoolean(fragment));
@@ -1304,6 +1302,15 @@ public class VideoSwipeActionsTest {
     }
 
     private static Object readField(final Object target, final String name) {
+        if (target instanceof org.schabi.newpipe.fragments.detail.VideoDetailFragment) {
+            switch (name) {
+                case "currentInfo": case "playQueue": case "url":
+                    return readField(readField(target, "vm"), name);
+                case "currentWorker": return readField(readField(target, "vm"), "worker");
+                case "binding": return readField(target, "_binding");
+                case "bottomSheetState": return readField(target, "sheetStateToSave");
+            }
+        }
         try {
             return accessibleField(target, name).get(target);
         } catch (final IllegalAccessException error) {
@@ -1312,6 +1319,18 @@ public class VideoSwipeActionsTest {
     }
 
     private static void writeField(final Object target, final String name, final Object value) {
+        if (target instanceof org.schabi.newpipe.fragments.detail.VideoDetailFragment) {
+            switch (name) {
+                case "currentInfo": case "playQueue": case "url":
+                    writeField(readField(target, "vm"), name, value);
+                    return;
+                case "currentWorker":
+                    writeField(readField(target, "vm"), "worker", value);
+                    return;
+                case "binding": writeField(target, "_binding", value); return;
+                case "bottomSheetState": writeField(target, "sheetStateToSave", value); return;
+            }
+        }
         try {
             accessibleField(target, name).set(target, value);
         } catch (final IllegalAccessException error) {
@@ -1353,8 +1372,6 @@ public class VideoSwipeActionsTest {
             fragment = new VideoOpenFragment(host, activity);
             writeField(fragment, "binding", org.schabi.newpipe.databinding.FragmentVideoDetailBinding
                     .inflate(android.view.LayoutInflater.from(host)));
-            writeField(fragment, "pageAdapter", new org.schabi.newpipe.fragments.detail.TabAdapter(
-                    host.getSupportFragmentManager()));
             writeField(fragment, "bottomSheetState",
                     com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED);
             writeField(holder, "listener", fragment);
@@ -1406,9 +1423,8 @@ public class VideoSwipeActionsTest {
             final boolean old = prefs.getBoolean(key, false);
             try {
                 prefs.edit().putBoolean(key, false).commit();
-                final View thumbnail = new View(activity);
-                thumbnail.setId(R.id.detail_thumbnail_root_layout);
-                fragment.onClick(thumbnail);
+                ((org.schabi.newpipe.fragments.detail.DetailActions.Host)
+                        readField(fragment, "hosts")).playInMainPlayer();
             } finally {
                 final var editor = prefs.edit();
                 if (had) editor.putBoolean(key, old); else editor.remove(key);
@@ -1450,7 +1466,6 @@ public class VideoSwipeActionsTest {
             fragment = new VideoOpenFragment(old.getContext(), activity);
             writeField(fragment, "binding", readField(old, "binding"));
             writeField(old, "binding", null);
-            writeField(fragment, "pageAdapter", readField(old, "pageAdapter"));
             writeField(fragment, "playerService", readField(old, "playerService"));
             if (player != null) player.removeFragmentListener(old);
             writeField(holder, "listener", fragment);
@@ -1574,6 +1589,7 @@ public class VideoSwipeActionsTest {
         VideoOpenFragment(final Context context, final VideoOpenActivity activity) {
             testContext = context;
             this.activity = activity;
+            writeField(this, "vm", new org.schabi.newpipe.fragments.detail.VideoDetailViewModel());
         }
 
         @Override public Context getContext() { return testContext; }
@@ -1588,7 +1604,9 @@ public class VideoSwipeActionsTest {
         public void handleResult(final org.schabi.newpipe.extractor.stream.StreamInfo info) {
             // Replace tab/thumbnail rendering, retaining the production metadata assignment.
             writeField(this, "currentInfo", info);
-            setInitialData(info.getServiceId(), info.getOriginalUrl(), info.getName(), playQueue);
+            ((org.schabi.newpipe.fragments.detail.VideoDetailViewModel) readField(this, "vm"))
+                    .setInitialData(info.getServiceId(), info.getOriginalUrl(), info.getName(),
+                            (PlayQueue) readField(this, "playQueue"));
         }
     }
 

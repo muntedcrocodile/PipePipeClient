@@ -42,6 +42,7 @@ import android.view.ViewGroup;
 import android.widget.*;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AppCompatActivity;
@@ -73,6 +74,7 @@ import org.schabi.newpipe.fragments.list.search.SearchFragment;
 import org.schabi.newpipe.local.feed.notifications.NotificationWorker;
 import org.schabi.newpipe.player.Player;
 import org.schabi.newpipe.player.PlayerIntentConstants;
+import org.schabi.newpipe.player.event.DetailPlayerEvents;
 import org.schabi.newpipe.player.event.OnKeyDownListener;
 import org.schabi.newpipe.player.helper.PlayerHolder;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
@@ -88,7 +90,6 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -110,7 +111,8 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean servicesShown = false;
 
-    private BroadcastReceiver broadcastReceiver;
+    @Nullable
+    private DetailPlayerEvents.Listener playerStartedListener;
 
     private static final int ITEM_ID_SUBSCRIPTIONS = -1;
     private static final int ITEM_ID_FEED = -2;
@@ -147,6 +149,8 @@ public class MainActivity extends AppCompatActivity {
 
         assureCorrectAppLanguage(this);
         super.onCreate(savedInstanceState);
+        org.schabi.newpipe.cast.CastReceiver.Companion.setEnabled(this,
+                org.schabi.newpipe.cast.CastReceiver.Companion.isEnabledByUser(this));
 
         mainBinding = ActivityMainBinding.inflate(getLayoutInflater());
         drawerLayoutBinding = mainBinding.drawerLayout;
@@ -539,8 +543,8 @@ public class MainActivity extends AppCompatActivity {
         if (!isChangingConfigurations()) {
             StateSaver.clearStateFiles();
         }
-        if (broadcastReceiver != null) {
-            unregisterReceiver(broadcastReceiver);
+        if (playerStartedListener != null) {
+            DetailPlayerEvents.removeListener(playerStartedListener);
         }
     }
 
@@ -867,7 +871,9 @@ public class MainActivity extends AppCompatActivity {
                                 VideoDetailFragment.KEY_SWITCHING_PLAYERS, false);
                         NavigationHelper.openVideoDetailFragment(
                                 getApplicationContext(), getSupportFragmentManager(),
-                                serviceId, url, title, playQueue, switchingPlayers);
+                                serviceId, url, title, playQueue, switchingPlayers,
+                                intent.getBooleanExtra(
+                                        VideoDetailFragment.KEY_FORCE_PLAY_FULLSCREEN, false));
                         break;
                     case CHANNEL:
                         NavigationHelper.openChannelFragment(getSupportFragmentManager(),
@@ -920,27 +926,17 @@ public class MainActivity extends AppCompatActivity {
             // if the player is already open, no need for a broadcast receiver
             openMiniPlayerIfMissing();
         } else {
-            // listen for player start intent being sent around
-            broadcastReceiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(final Context context, final Intent intent) {
-                    if (Objects.equals(intent.getAction(),
-                            VideoDetailFragment.ACTION_PLAYER_STARTED)) {
-                        openMiniPlayerIfMissing();
-                        // At this point the player is added 100%, we can unregister. Other actions
-                        // are useless since the fragment will not be removed after that.
-                        unregisterReceiver(broadcastReceiver);
-                        broadcastReceiver = null;
-                    }
+            // listen for the player being started
+            playerStartedListener = event -> {
+                if (event == DetailPlayerEvents.Event.PlayerStarted.INSTANCE) {
+                    openMiniPlayerIfMissing();
+                    // At this point the player is added 100%, we can stop listening. Other events
+                    // are useless since the fragment will not be removed after that.
+                    DetailPlayerEvents.removeListener(playerStartedListener);
+                    playerStartedListener = null;
                 }
             };
-            final IntentFilter intentFilter = new IntentFilter();
-            intentFilter.addAction(VideoDetailFragment.ACTION_PLAYER_STARTED);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(broadcastReceiver, intentFilter, Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(broadcastReceiver, intentFilter);
-            }
+            DetailPlayerEvents.addListener(playerStartedListener);
         }
     }
 

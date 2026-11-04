@@ -226,7 +226,7 @@ class PlayerStartController(private val player: Player) {
                 player.pause()
             }
         }
-        NavigationHelper.sendPlayerStartedEvent(player.context)
+        NavigationHelper.sendPlayerStartedEvent()
         if (firstEnqueue) NavigationHelper.playOnMainPlayer(player.context, newQueue, true)
     }
 
