@@ -18,6 +18,25 @@ if (debugPackageSuffix != null
 def baseVersionCode = 1110
 def appVersionName = "5.5.0"
 def abiCodes = ['armeabi-v7a': 1, 'x86': 2, 'x86_64': 3, 'arm64-v8a': 4]
+// CI may supply fork versions with -P; ordinary upstream builds keep the defaults above.
+def forkVersionCode = providers.gradleProperty('forkVersionCode').orNull
+if (forkVersionCode != null) {
+    // Android's versionCode ceiling applies to every ABI output, not just the base.
+    def maxBaseVersionCode = (2100000000L - abiCodes.values().max()).intdiv(100)
+    if (!(forkVersionCode ==~ /[0-9]+/)
+            || new BigInteger(forkVersionCode) < 1
+            || new BigInteger(forkVersionCode) > maxBaseVersionCode) {
+        throw new GradleException("forkVersionCode must be a positive integer <= ${maxBaseVersionCode} (before ABI encoding)")
+    }
+    baseVersionCode = Integer.parseInt(forkVersionCode)
+}
+def forkVersionName = providers.gradleProperty('forkVersionName').orNull
+if (forkVersionName != null) {
+    if (forkVersionName.trim().isEmpty()) {
+        throw new GradleException('forkVersionName must be nonblank')
+    }
+    appVersionName = forkVersionName.trim()
+}
 def stableBuildConfigVersionCode =
         (100 * baseVersionCode) + abiCodes['armeabi-v7a']
 
