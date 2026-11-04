@@ -194,6 +194,48 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void retainedDetailViewModelKeepsPausedTransportWithoutNewPlaybackIntent() {
+        withVideoOpen(fixture -> {
+            fixture.connectBufferingPlayer();
+            fixture.requestExplicitPlayback();
+            fixture.complete(fixture.info("A"), fixture.generation());
+            fixture.assertOpened("A", true);
+            fixture.player.playPause();
+            assertEquals(false, fixture.player.getPlayWhenReady());
+            final Object retained = readField(fixture.fragment, "vm");
+
+            fixture.recreateRetainingViewModel();
+            assertSame(retained, readField(fixture.fragment, "vm"));
+            // Rebinding reports matching metadata, so the autoplay flag is still true.
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            assertEquals(true, readField(fixture.fragment, "autoPlayEnabled"));
+            fixture.fragment.restoreRetainedView();
+            assertEquals("Retained-info rendering must not send PLAY_WHEN_READY=true",
+                    1, fixture.activity.intents.size());
+            assertEquals(false, fixture.player.getPlayWhenReady());
+        });
+    }
+
+    @Test
+    public void retainedDetailViewModelStillCompletesExplicitPendingOpenOnce() {
+        withVideoOpen(fixture -> {
+            fixture.requestExplicitPlayback();
+            writeField(fixture.fragment, "binding", null);
+            // Production metadata arrives with no view, then the same model gets a new view.
+            fixture.fragment.onMetadataUpdate(fixture.info("A"), fixture.queue());
+            assertEquals(true, readField(fixture.fragment, "pendingVideoOpen"));
+            assertEquals(0, fixture.activity.intents.size());
+            final Object retained = readField(fixture.fragment, "vm");
+            fixture.recreateRetainingViewModel();
+            assertSame(retained, readField(fixture.fragment, "vm"));
+            fixture.fragment.restoreRetainedView();
+            fixture.assertOpened("A", true);
+            fixture.fragment.restoreRetainedView();
+            assertEquals(1, fixture.activity.intents.size());
+        });
+    }
+
+    @Test
     public void selectingAnotherVideoCancelsDeferredFullscreenWithoutAutoplayingIt() {
         withVideoOpen(fixture -> {
             fixture.fragment.setAutoPlay(true);
@@ -1444,6 +1486,8 @@ public class VideoSwipeActionsTest {
                 org.schabi.newpipe.player.helper.PlayerHolder.getInstance();
         private final Object oldListener;
         private final List<String> cachedUrls = new ArrayList<>();
+        private final androidx.lifecycle.ViewModelStore viewModelStore =
+                new androidx.lifecycle.ViewModelStore();
         private org.schabi.newpipe.player.Player player;
         private com.google.android.exoplayer2.ExoPlayer exo;
         private com.google.android.exoplayer2.Player.Listener exoEventAdapter;
@@ -1452,7 +1496,7 @@ public class VideoSwipeActionsTest {
             holder.stopService();
             oldListener = readField(holder, "listener");
             activity = new VideoOpenActivity(host);
-            fragment = new VideoOpenFragment(host, activity);
+            fragment = new VideoOpenFragment(host, activity, viewModelStore);
             writeField(fragment, "binding", org.schabi.newpipe.databinding.FragmentVideoDetailBinding
                     .inflate(android.view.LayoutInflater.from(host)));
             writeField(fragment, "bottomSheetState",
@@ -1550,6 +1594,21 @@ public class VideoSwipeActionsTest {
             writeField(fragment, "binding", readField(old, "binding"));
             writeField(old, "binding", null);
             writeField(fragment, "playerService", readField(old, "playerService"));
+            if (player != null) player.removeFragmentListener(old);
+            writeField(holder, "listener", fragment);
+            fragment.onRestoreInstanceState(state);
+        }
+
+        /** Retains the actual ViewModelStore; rendering/service launch remain fixture boundaries. */
+        void recreateRetainingViewModel() {
+            final android.os.Bundle state = saveState();
+            final VideoOpenFragment old = fragment;
+            fragment = new VideoOpenFragment(old.getContext(), activity, viewModelStore);
+            writeField(old, "binding", null);
+            writeField(fragment, "binding", org.schabi.newpipe.databinding.FragmentVideoDetailBinding
+                    .inflate(android.view.LayoutInflater.from(old.getContext())));
+            writeField(fragment, "playerService", readField(old, "playerService"));
+            writeField(fragment, "player", player);
             if (player != null) player.removeFragmentListener(old);
             writeField(holder, "listener", fragment);
             fragment.onRestoreInstanceState(state);
@@ -1662,6 +1721,7 @@ public class VideoSwipeActionsTest {
                 writeField(player, "simpleExoPlayer", null);
             }
             if (exo != null) exo.release();
+            viewModelStore.clear();
         }
     }
 
@@ -1670,13 +1730,23 @@ public class VideoSwipeActionsTest {
         private final Context testContext;
 
         VideoOpenFragment(final Context context, final VideoOpenActivity activity) {
+            this(context, activity, new androidx.lifecycle.ViewModelStore());
+        }
+
+        VideoOpenFragment(final Context context, final VideoOpenActivity activity,
+                          final androidx.lifecycle.ViewModelStore viewModelStore) {
             testContext = context;
             this.activity = activity;
-            writeField(this, "vm", new org.schabi.newpipe.fragments.detail.VideoDetailViewModel());
+            writeField(this, "vm", new androidx.lifecycle.ViewModelProvider(viewModelStore,
+                    new androidx.lifecycle.ViewModelProvider.NewInstanceFactory())
+                    .get(org.schabi.newpipe.fragments.detail.VideoDetailViewModel.class));
         }
 
         @Override public Context getContext() { return testContext; }
         @Override public void showLoading() { }
+        @Override public void hideLoading() { }
+
+        void restoreRetainedView() { super.doInitialLoadLogic(); }
 
         @Override
         public void onRestoreInstanceState(final android.os.Bundle state) {

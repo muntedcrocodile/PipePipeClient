@@ -556,8 +556,9 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
             info != null -> {
                 render(info, rebuildTabs = tabs?.isShowing(info) != true)
                 header?.showContent()
-                // Rendering retained metadata is not a new playback request; only an
-                // explicitly deferred open (e.g. a video swipe) is completed here.
+                // Rendering retained metadata is not a new playback request. In particular,
+                // autoplay may still be enabled after the connected player was paused.
+                // Only an explicitly deferred open (e.g. a video swipe) is completed here.
                 openPendingVideoPlayer()
             }
             else -> {
