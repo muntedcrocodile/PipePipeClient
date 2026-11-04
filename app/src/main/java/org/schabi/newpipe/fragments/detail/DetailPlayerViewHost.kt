@@ -50,18 +50,27 @@ class DetailPlayerViewHost(
     private val thumbnail get() = binding.detailThumbnailRootLayout
     private var stickyPlayerEnabled = false
     private val blockedFocus = HashMap<View, SavedFocus>()
+    private var released = false
+    private val ownsView: Boolean
+        get() = !released && fragment.isAdded && fragment.view === binding.root
+    private var preDrawObserver: ViewTreeObserver? = null
+    private var pendingFocusView: View? = null
+    private var pendingFocusRequest: Runnable? = null
+    private var scrollAnimator: ValueAnimator? = null
 
     private val preDrawListener = object : ViewTreeObserver.OnPreDrawListener {
         override fun onPreDraw(): Boolean {
-            fragment.view?.let { view ->
-                setThumbnailHeight(windowHeight(), view.resources.displayMetrics)
-                view.viewTreeObserver.removeOnPreDrawListener(this)
-            }
+            val wasPending = preDrawObserver != null
+            cancelPreDraw()
+            if (!wasPending || !ownsView || !binding.root.isAttachedToWindow
+                || host.player?.isFullscreen != true) return true
+            setThumbnailHeight(windowHeight(), binding.root.resources.displayMetrics)
             return false
         }
     }
 
     fun addVideoPlayerView() {
+        if (!ownsView) return
         val player = host.player ?: return
         val playerService = host.playerService ?: return
         if (fragment.view == null) {
@@ -92,12 +101,19 @@ class DetailPlayerViewHost(
             // The focus is still on the detail page's thumbnail (drawn as a white frame) or on
             // the overlay button, both underneath the fullscreen player. Hand it to the player.
             thumbnail.root.clearFocus()
-            player.rootView.post {
-                val current = host.player
-                if (current != null && current.isFullscreen) {
-                    current.binding.playPauseButton.requestFocus()
+            cancelFocusRequest()
+            val request = object : Runnable {
+                override fun run() {
+                    if (pendingFocusRequest !== this) return
+                    cancelFocusRequest()
+                    if (ownsView && host.player === player && player.isFullscreen) {
+                        player.binding.playPauseButton.requestFocus()
+                    }
                 }
             }
+            pendingFocusView = player.rootView
+            pendingFocusRequest = request
+            player.rootView.post(request)
         }
     }
 
@@ -193,6 +209,7 @@ class DetailPlayerViewHost(
     }
 
     fun removeVideoPlayerView() {
+        if (!ownsView) return
         host.player?.let { setPageFocusBlocked(false, it.rootView) }
         if (fragment.view != null) {
             thumbnail.playerPlaceholder.layoutParams.height = FrameLayout.LayoutParams.MATCH_PARENT
@@ -207,16 +224,19 @@ class DetailPlayerViewHost(
      * to [MAX_PLAYER_HEIGHT] of the screen.
      */
     fun updateThumbnailHeight() {
-        val view = fragment.view ?: return
+        if (!ownsView) return
+        val view = binding.root
         val metrics = view.resources.displayMetrics
-        view.viewTreeObserver.removeOnPreDrawListener(preDrawListener)
+        cancelPreDraw()
         if (host.player?.isFullscreen == true) {
             val height = windowHeight()
             // Height is zero when the view is not yet displayed like after orientation change
             if (height != 0) {
                 setThumbnailHeight(height, metrics)
             } else {
-                view.viewTreeObserver.addOnPreDrawListener(preDrawListener)
+                preDrawObserver = activity.window.decorView.viewTreeObserver.also {
+                    it.addOnPreDrawListener(preDrawListener)
+                }
             }
         } else {
             val isPortrait = metrics.heightPixels > metrics.widthPixels
@@ -228,6 +248,7 @@ class DetailPlayerViewHost(
 
     /** Pins the player to the top of the page, unless disabled or in landscape. */
     fun updateStickyPlayerMode() {
+        if (!ownsView) return
         val context = fragment.requireContext()
         stickyPlayerEnabled = PreferenceManager.getDefaultSharedPreferences(context)
             .getBoolean(context.getString(R.string.pin_video_to_top_key), true)
@@ -241,6 +262,7 @@ class DetailPlayerViewHost(
     }
 
     fun showSystemUi() {
+        if (!ownsView) return
         val window = fragment.activity?.window ?: return
         // Prevent jumping of the player on devices with cutout
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -255,6 +277,7 @@ class DetailPlayerViewHost(
     }
 
     fun hideSystemUiIfNeeded() {
+        if (!ownsView) return
         if (host.player?.isFullscreen == true
             && host.sheetState == BottomSheetBehavior.STATE_EXPANDED) {
             hideSystemUi()
@@ -263,6 +286,7 @@ class DetailPlayerViewHost(
 
     /** Applies the brightness of the brightness gesture, only kept in fullscreen. */
     fun setupBrightness() {
+        if (!ownsView) return
         val activity = fragment.activity ?: return
         val player = host.player
         if (player == null || !player.videoPlayerSelected() || !player.isFullscreen
@@ -282,6 +306,7 @@ class DetailPlayerViewHost(
     }
 
     fun restoreDefaultBrightness() {
+        if (!ownsView) return
         val window = fragment.activity?.window ?: return
         val lp = window.attributes
         if (lp.screenBrightness != -1f) {
@@ -292,21 +317,46 @@ class DetailPlayerViewHost(
 
     /** Scrolls the player out of the way, down to the description. */
     fun scrollPastPlayer() {
+        if (!ownsView) return
+        cancelScrollAnimation()
         val params = binding.appBarLayout.layoutParams as CoordinatorLayout.LayoutParams
         val behavior = params.behavior as? AppBarLayout.Behavior ?: return
-        ValueAnimator.ofInt(0, -thumbnail.playerPlaceholder.height).apply {
+        scrollAnimator = ValueAnimator.ofInt(0, -thumbnail.playerPlaceholder.height).apply {
             interpolator = DecelerateInterpolator()
             duration = 500
             addUpdateListener {
-                behavior.topAndBottomOffset = it.animatedValue as Int
-                binding.appBarLayout.requestLayout()
+                if (ownsView) {
+                    behavior.topAndBottomOffset = it.animatedValue as Int
+                    binding.appBarLayout.requestLayout()
+                }
             }
             start()
         }
     }
 
     fun release() {
-        fragment.view?.viewTreeObserver?.removeOnPreDrawListener(preDrawListener)
+        if (released) return
+        released = true
+        cancelPreDraw()
+        cancelFocusRequest()
+        cancelScrollAnimation()
+    }
+
+    private fun cancelPreDraw() {
+        preDrawObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(preDrawListener)
+        preDrawObserver = null
+    }
+
+    private fun cancelFocusRequest() {
+        pendingFocusRequest?.let { pendingFocusView?.removeCallbacks(it) }
+        pendingFocusRequest = null
+        pendingFocusView = null
+    }
+
+    private fun cancelScrollAnimation() {
+        scrollAnimator?.removeAllUpdateListeners()
+        scrollAnimator?.cancel()
+        scrollAnimator = null
     }
 
     private fun hideSystemUi() {

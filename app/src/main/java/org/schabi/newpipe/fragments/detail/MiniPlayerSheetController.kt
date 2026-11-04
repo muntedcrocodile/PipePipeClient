@@ -48,13 +48,17 @@ class MiniPlayerSheetController(
         fun openUploaderChannel()
     }
 
-    private val activity get() = fragment.requireActivity()
+    private val activity = fragment.requireActivity()
     private val overlay get() = binding.overlayLayout
     private val peekHeight =
         fragment.resources.getDimensionPixelSize(R.dimen.mini_player_height)
     private val behavior: BottomSheetBehavior<FrameLayout> =
         BottomSheetBehavior.from(activity.findViewById(R.id.fragment_player_holder))
     private var pendingLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+    private var pendingLayoutObserver: ViewTreeObserver? = null
+    private var released = false
+    private val ownsView: Boolean
+        get() = !released && fragment.view === binding.root && fragment.activity === activity
 
     private val sheetCallback = object : BottomSheetBehavior.BottomSheetCallback() {
         override fun onStateChanged(bottomSheet: View, newState: Int) = onSheetStateChanged(newState)
@@ -65,6 +69,7 @@ class MiniPlayerSheetController(
 
     /** Collapses the page when the user opens another page from the detail page. */
     private val backStackListener = FragmentManager.OnBackStackChangedListener {
+        if (!ownsView) return@OnBackStackChangedListener
         val top = activity.supportFragmentManager.fragments.lastOrNull()
             ?: return@OnBackStackChangedListener
         // comments and replies are opened inside the detail page
@@ -97,10 +102,12 @@ class MiniPlayerSheetController(
     }
 
     fun expand() {
+        if (!ownsView) return
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
     }
 
     fun hide() {
+        if (!ownsView) return
         behavior.state = BottomSheetBehavior.STATE_HIDDEN
     }
 
@@ -110,6 +117,7 @@ class MiniPlayerSheetController(
      * gestures. The exception is swipe-down-to-minimize in fullscreen, which is exactly that drag.
      */
     fun updateDraggableForFullscreen() {
+        if (!ownsView) return
         val inFullscreen = host.player?.isFullscreen == true
         val minimizeBySheet = inFullscreen && PlayerHelper.getMinimizeGestureMode(activity) ==
             PlayerHelper.MinimizeGestureMode.MINIMIZE_GESTURE_FULLSCREEN_AND_NON_FULLSCREEN
@@ -117,6 +125,7 @@ class MiniPlayerSheetController(
     }
 
     fun updateOverlayData(title: String?, uploader: String?, thumbnailUrl: String?) {
+        if (!ownsView) return
         overlay.overlayTitleTextView.text = title.orEmpty()
         overlay.overlayChannelTextView.text = uploader.orEmpty()
         overlay.overlayThumbnail.setImageResource(R.drawable.dummy_thumbnail_dark)
@@ -126,6 +135,7 @@ class MiniPlayerSheetController(
     }
 
     fun setPlayPauseImage(playing: Boolean) {
+        if (!ownsView) return
         overlay.overlayPlayPauseButton.setImageResource(
             if (playing) R.drawable.ic_pause else R.drawable.ic_play_arrow)
     }
@@ -134,6 +144,7 @@ class MiniPlayerSheetController(
      * For Android TV: moves the focus to the main fragment, or to the player otherwise.
      */
     fun moveFocusToMainFragment(toMain: Boolean) {
+        if (!ownsView) return
         playerView.setupBrightness()
         val mainFragment = activity.findViewById<ViewGroup>(R.id.fragment_holder)
         // Hamburger button steals the focus even under the bottom sheet
@@ -159,15 +170,30 @@ class MiniPlayerSheetController(
     }
 
     fun release() {
+        if (released) return
+        // Invalidate first: an observer/behavior dispatch may already hold a callback snapshot.
+        released = true
         behavior.removeBottomSheetCallback(sheetCallback)
         activity.supportFragmentManager.removeOnBackStackChangedListener(backStackListener)
-        pendingLayoutListener?.let {
-            binding.root.viewTreeObserver.removeOnGlobalLayoutListener(it)
+        cancelLayoutSync()
+        listOf(overlay.overlayThumbnail, overlay.overlayMetadataLayout,
+            overlay.overlayButtonsLayout, overlay.overlayPlayPauseButton,
+            overlay.overlayCloseButton, overlay.overlayPlayQueueButton).forEach {
+            it.setOnClickListener(null)
+            it.setOnLongClickListener(null)
         }
+    }
+
+    private fun cancelLayoutSync() {
+        pendingLayoutListener?.let { listener ->
+            pendingLayoutObserver?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(listener)
+        }
+        pendingLayoutObserver = null
         pendingLayoutListener = null
     }
 
     private fun onSheetStateChanged(newState: Int) {
+        if (!ownsView) return
         host.savedSheetState = newState
         val player = host.player
         when (newState) {
@@ -223,7 +249,7 @@ class MiniPlayerSheetController(
         overlay.overlayMetadataLayout.setOnClickListener(expand)
         overlay.overlayButtonsLayout.setOnClickListener(expand)
         val openChannel = View.OnLongClickListener {
-            if (host.currentInfo == null) {
+            if (!ownsView || host.currentInfo == null) {
                 return@OnLongClickListener false
             }
             host.openUploaderChannel()
@@ -231,10 +257,12 @@ class MiniPlayerSheetController(
         }
         overlay.overlayThumbnail.setOnLongClickListener(openChannel)
         overlay.overlayMetadataLayout.setOnLongClickListener(openChannel)
-        overlay.overlayPlayPauseButton.setOnClickListener { host.onPlayPauseClicked() }
+        overlay.overlayPlayPauseButton.setOnClickListener {
+            if (ownsView) host.onPlayPauseClicked()
+        }
         overlay.overlayCloseButton.setOnClickListener { hide() }
         overlay.overlayPlayQueueButton.setOnClickListener {
-            if (host.player != null) {
+            if (ownsView && host.player != null) {
                 activity.startActivity(NavigationHelper.getPlayQueueActivityIntent(activity))
             }
         }
@@ -258,6 +286,7 @@ class MiniPlayerSheetController(
             as? AppBarLayout.Behavior
 
     private fun setOverlayLook(slideOffset: Float) {
+        if (!ownsView) return
         val appBarBehavior = appBarBehavior()
         // slideOffset < 0 when the mini player is about to be closed by a swipe
         if (appBarBehavior == null || slideOffset < 0) {
@@ -303,11 +332,15 @@ class MiniPlayerSheetController(
      * Re-apply the saved state once the views have been laid out.
      */
     private fun syncStateAfterLayout(state: Int) {
-        val observer = binding.root.viewTreeObserver
+        cancelLayoutSync()
+        // A detached root can expose a new floating observer. Register on the activity's
+        // attached observer and keep that exact owner for cancellation in onDestroyView.
+        val observer = activity.window.decorView.viewTreeObserver
         val listener = object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
-                binding.root.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                pendingLayoutListener = null
+                if (pendingLayoutListener !== this) return
+                cancelLayoutSync()
+                if (!ownsView || !binding.root.isAttachedToWindow) return
                 host.savedSheetState = state
                 if (state != BottomSheetBehavior.STATE_HIDDEN) {
                     manageSpaceAtTheBottom(false)
@@ -320,6 +353,7 @@ class MiniPlayerSheetController(
             }
         }
         pendingLayoutListener = listener
+        pendingLayoutObserver = observer
         observer.addOnGlobalLayoutListener(listener)
     }
 

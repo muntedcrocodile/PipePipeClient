@@ -653,8 +653,11 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
      * thread, which shows as glitches in the player while it switches streams.
      */
     private fun renderPlayerStreamDelayed(info: StreamInfo) {
+        val expectedBinding = _binding ?: return
+        val selectionGeneration = videoSelectionGeneration
         handler.postDelayed({
-            if (_binding == null || vm.currentInfo !== info
+            if (_binding !== expectedBinding || selectionGeneration != videoSelectionGeneration
+                || vm.currentInfo !== info
                 || (header?.shownUrl == info.url && tabs?.isShowing(info) == true)) {
                 return@postDelayed
             }
