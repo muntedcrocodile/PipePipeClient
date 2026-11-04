@@ -555,9 +555,9 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
             info != null -> {
                 render(info, rebuildTabs = tabs?.isShowing(info) != true)
                 header?.showContent()
-                if (!openPendingVideoPlayer() && isAutoplayEnabled()) {
-                    openVideoPlayerAutoFullscreen()
-                }
+                // Rendering retained metadata is not a new playback request. In particular,
+                // autoplay may still be enabled after the connected player was paused.
+                openPendingVideoPlayer()
             }
             else -> {
                 scrollToTop()
