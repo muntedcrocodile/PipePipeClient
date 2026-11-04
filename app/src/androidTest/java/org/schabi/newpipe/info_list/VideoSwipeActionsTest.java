@@ -1191,10 +1191,14 @@ public class VideoSwipeActionsTest {
                         && !pager[0].isLayoutRequested() && pager[0].getWidth() > 0
                         && pager[0].getHeight() > 0 && refreshLayout[0].getParent() == pager[0]
                         && refreshLayout[0].isLaidOut() && !refreshLayout[0].isLayoutRequested()
+                        && pager[0].hasWindowFocus()
+                        && ((TracedSwipeRefresh) refreshLayout[0]).draws > 0
                         && list.isLaidOut() && !list.isLayoutRequested()
                         && list.getWidth() > 0 && list.getHeight() > 0
                         && row != null && row.itemView.isShown() && row.itemView.getHeight() > 0;
-            });
+            }, () -> "focus=" + pager[0].hasWindowFocus() + " "
+                    + ((TracedSwipeRefresh) refreshLayout[0]).renderState());
+            final float[] coordinates = new float[3];
             onMain(() -> {
                 assertEquals(0, pager[0].getCurrentItem());
                 assertEquals(0, pager[0].getScrollX());
@@ -1211,24 +1215,34 @@ public class VideoSwipeActionsTest {
                 final float startY = rowLocation[1] - pagerLocation[1] + row.getHeight() / 2f;
                 final float distance = pager[0].getHeight() * 0.75f;
                 assertEquals(true, startY > 0 && startY + distance < pager[0].getHeight());
+                coordinates[0] = x;
+                coordinates[1] = startY;
+                coordinates[2] = distance;
                 trace.always("geometry pager=" + pager[0].getWidth() + "x" + pager[0].getHeight()
                         + " refresh=" + refreshLayout[0].getWidth() + "x" + refreshLayout[0].getHeight()
                         + " list=" + fixture[0].list.getWidth() + "x" + fixture[0].list.getHeight()
                         + " x=" + x + " y=" + startY + " distance=" + distance);
-                final long down = android.os.SystemClock.uptimeMillis();
-                for (int i = 0; i <= 24; i++) {
-                    trace.step = i;
-                    final int action = i == 0 ? android.view.MotionEvent.ACTION_DOWN
-                            : i == 24 ? android.view.MotionEvent.ACTION_UP
+            });
+            // A real pull spans render frames. Dispatch each event in its own main-thread
+            // turn with the current time instead of batching future-dated events in one turn.
+            final long down = android.os.SystemClock.uptimeMillis();
+            for (int i = 0; i <= 24; i++) {
+                final int step = i;
+                onMain(() -> {
+                    trace.step = step;
+                    final int action = step == 0 ? android.view.MotionEvent.ACTION_DOWN
+                            : step == 24 ? android.view.MotionEvent.ACTION_UP
                             : android.view.MotionEvent.ACTION_MOVE;
-                    final var event = android.view.MotionEvent.obtain(down, down + i * 16L,
-                            action, x, startY + distance * i / 24f, 0);
+                    final var event = android.view.MotionEvent.obtain(down,
+                            android.os.SystemClock.uptimeMillis(), action,
+                            coordinates[0], coordinates[1] + coordinates[2] * step / 24f, 0);
                     final boolean handled = pager[0].dispatchTouchEvent(event);
                     trace.add("root.handled=" + handled + " "
                             + ((TracedSwipeRefresh) refreshLayout[0]).state());
                     event.recycle();
-                }
-            });
+                });
+                if (i < 24) android.os.SystemClock.sleep(16);
+            }
             // SwipeRefreshLayout invokes its listener after its settle animation.
             final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
             final int[] actual = {0};
@@ -1241,6 +1255,7 @@ public class VideoSwipeActionsTest {
                 result.refreshes = refreshes[0];
                 result.submitted = fixture[0].context.submitted.size();
                 trace.always("after settle " + ((TracedSwipeRefresh) refreshLayout[0]).state());
+                trace.always(((TracedSwipeRefresh) refreshLayout[0]).renderState());
             });
         });
         return result;
@@ -1295,6 +1310,7 @@ public class VideoSwipeActionsTest {
 
     private static final class TracedSwipeRefresh extends androidx.swiperefreshlayout.widget.SwipeRefreshLayout {
         private final PullTrace trace;
+        private int draws;
 
         TracedSwipeRefresh(final Context context, final PullTrace trace) { super(context); this.trace = trace; }
 
@@ -1305,6 +1321,22 @@ public class VideoSwipeActionsTest {
                     + " threshold=" + readField(this, "mTotalDragDistance")
                     + " pointer=" + readField(this, "mActivePointerId")
                     + " up=" + canChildScrollUp();
+        }
+
+        String renderState() {
+            final View circle = (View) readField(this, "mCircleView");
+            final android.view.animation.Animation animation = circle.getAnimation();
+            final android.graphics.Rect visible = new android.graphics.Rect();
+            return "draws=" + draws + " notify=" + readField(this, "mNotify")
+                    + " circleShown=" + circle.isShown() + " circleVisible="
+                    + circle.getGlobalVisibleRect(visible) + ":" + visible
+                    + " animation=" + (animation == null ? "null"
+                    : "started=" + animation.hasStarted() + ",ended=" + animation.hasEnded());
+        }
+
+        @Override public void draw(final android.graphics.Canvas canvas) {
+            draws++;
+            super.draw(canvas);
         }
 
         @Override public boolean onInterceptTouchEvent(final android.view.MotionEvent event) {
@@ -1352,7 +1384,8 @@ public class VideoSwipeActionsTest {
     }
 
     private static void awaitOnMain(final String message,
-                                    final java.util.function.BooleanSupplier condition) {
+                                    final java.util.function.BooleanSupplier condition,
+                                    final java.util.function.Supplier<String> diagnostics) {
         final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
         final boolean[] ready = {false};
         do {
@@ -1360,7 +1393,7 @@ public class VideoSwipeActionsTest {
             if (ready[0]) return;
             android.os.SystemClock.sleep(25);
         } while (android.os.SystemClock.uptimeMillis() < deadline);
-        onMain(() -> assertEquals(message, true, condition.getAsBoolean()));
+        onMain(() -> assertEquals(message + ": " + diagnostics.get(), true, condition.getAsBoolean()));
     }
 
     @Test
