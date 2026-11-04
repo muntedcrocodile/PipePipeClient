@@ -1046,6 +1046,89 @@ public class VideoSwipeActionsTest {
     }
 
     @Test
+    public void verticalPullThroughEnabledVideoSwipesReachesRefreshCallback() {
+        assertVerticalPullRefresh(false);
+    }
+
+    @Test
+    public void verticalPullThroughRowsWithNoSwipeActionsReachesRefreshCallback() {
+        assertVerticalPullRefresh(true);
+    }
+
+    /** Real ViewPager -> SwipeRefreshLayout -> RecyclerView dispatch, with production row routing. */
+    private void assertVerticalPullRefresh(final boolean noActions) {
+        if (noActions) {
+            prefs.edit().putString("video_swipe_left_action", "none")
+                    .putString("video_swipe_right_action", "none").commit();
+        }
+        withActivity(activity -> {
+            final SwipeFixture[] fixture = new SwipeFixture[1];
+            final androidx.viewpager.widget.ViewPager[] pager = new androidx.viewpager.widget.ViewPager[1];
+            final int[] refreshes = {0};
+            onMain(() -> {
+                fixture[0] = new SwipeFixture(activity, false);
+                final SourceFragment fragment = new SourceFragment();
+                activity.getSupportFragmentManager().beginTransaction().add(fragment, null).commitNow();
+                final var refresh = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(activity);
+                refresh.addView(fixture[0].list);
+                refresh.setOnRefreshListener(() -> refreshes[0]++);
+                VideoSwipeActions.protectTabGesture(fragment, fixture[0].list,
+                        position -> position >= 0 && position < fixture[0].rows.size()
+                                ? fixture[0].rows.get(position) : null);
+                new ItemTouchHelper(fixture[0].callback).attachToRecyclerView(fixture[0].list);
+                pager[0] = new androidx.viewpager.widget.ViewPager(activity);
+                pager[0].setAdapter(new androidx.viewpager.widget.PagerAdapter() {
+                    @Override public int getCount() { return 1; }
+                    @Override public boolean isViewFromObject(final View view, final Object object) {
+                        return view == object;
+                    }
+                    @Override public Object instantiateItem(final ViewGroup container, final int position) {
+                        container.addView(refresh);
+                        return refresh;
+                    }
+                    @Override public void destroyItem(final ViewGroup container, final int position,
+                                                      final Object object) {
+                        container.removeView((View) object);
+                    }
+                });
+                activity.setContentView(pager[0]);
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            onMain(() -> {
+                final View row = fixture[0].list.findViewHolderForAdapterPosition(0).itemView;
+                final int[] rowLocation = new int[2];
+                final int[] pagerLocation = new int[2];
+                row.getLocationInWindow(rowLocation);
+                pager[0].getLocationInWindow(pagerLocation);
+                final float x = rowLocation[0] - pagerLocation[0] + row.getWidth() / 2f;
+                final float startY = rowLocation[1] - pagerLocation[1] + row.getHeight() / 2f;
+                final float distance = pager[0].getHeight() * 0.75f;
+                final long down = android.os.SystemClock.uptimeMillis();
+                for (int i = 0; i <= 24; i++) {
+                    final int action = i == 0 ? android.view.MotionEvent.ACTION_DOWN
+                            : i == 24 ? android.view.MotionEvent.ACTION_UP
+                            : android.view.MotionEvent.ACTION_MOVE;
+                    final var event = android.view.MotionEvent.obtain(down, down + i * 16L,
+                            action, x, startY + distance * i / 24f, 0);
+                    pager[0].dispatchTouchEvent(event);
+                    event.recycle();
+                }
+            });
+            // SwipeRefreshLayout invokes its listener after its settle animation.
+            final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
+            final int[] actual = {0};
+            do {
+                onMain(() -> actual[0] = refreshes[0]);
+                if (actual[0] != 0) break;
+                android.os.SystemClock.sleep(25);
+            } while (android.os.SystemClock.uptimeMillis() < deadline);
+            assertEquals("A vertical pull beginning on a video must reach refresh", 1, actual[0]);
+            onMain(() -> assertEquals("Vertical pulls must not enqueue a row", 0,
+                    fixture[0].context.submitted.size()));
+        });
+    }
+
+    @Test
     public void disabledSourceSwipesDoNotClickOrLongClickRows() {
         assertDisabledPhysicalSwipes(false);
     }
