@@ -57,17 +57,22 @@ class PlayerHistoryController(private val player: Player) {
 
     fun saveStreamProgressState() {
         val playQueue = player.playQueue
-        if (player.exoPlayerIsNull() || player.currentMetadata == null || playQueue == null
+        val metadata = player.currentMetadata
+        if (player.exoPlayerIsNull() || metadata == null || playQueue == null
             || playQueue.index != player.simpleExoPlayer.currentMediaItemIndex
+            || metadata.uuid != playQueue.getItem()?.uuid
         ) {
-            // Make sure play queue and current window index are equal, to prevent saving state for
-            // the wrong stream on discontinuity (e.g. when the stream just changed but the
-            // playQueue index and currentMetadata still haven't updated)
+            // Removing the head can leave both indices at zero while ExoPlayer still reports
+            // the previous occurrence. Its position must not replace the new head's recovery,
+            // including when both occurrences have the same URL.
             return
         }
         // Save current position. It will help to restore this position once a user
         // wants to play prev or next stream from the queue
-        playQueue.setRecovery(playQueue.index, player.simpleExoPlayer.contentPosition)
+        // Persistent occurrence checkpoints are written once by Player's durable controller.
+        if (playQueue !is org.schabi.newpipe.player.playqueue.PersistentPlayQueue) {
+            playQueue.setRecovery(playQueue.index, player.simpleExoPlayer.contentPosition)
+        }
         saveStreamProgressState(player.simpleExoPlayer.currentPosition)
     }
 
@@ -85,19 +90,12 @@ class PlayerHistoryController(private val player: Player) {
      */
     fun startPlaybackWithSavedProgress(item: PlayerMediaItem, onResult: (Long?) -> Unit) {
         databaseUpdateDisposable.add(
-            recordManager.loadStreamState(item)
+            recordManager.loadPlaybackResumePosition(item)
                 .observeOn(AndroidSchedulers.mainThread())
                 // Do not place the continuation in doFinally() because
                 // it restarts playback after destroy()
                 //.doFinally()
-                .subscribe({ state ->
-                    if (!state.isFinished(item.duration)) {
-                        // resume playback only if the stream was not played to the end
-                        onResult(state.progressMillis)
-                    } else {
-                        onResult(null)
-                    }
-                }, { error ->
+                .subscribe({ position -> onResult(position) }, { error ->
                     if (Player.DEBUG) {
                         Log.w(Player.TAG, "Failed to start playback", error)
                     }

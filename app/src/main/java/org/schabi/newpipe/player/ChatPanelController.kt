@@ -35,21 +35,31 @@ class ChatPanelController(private val player: Player) {
     private val pinnedObserver = Observer<List<PinnedSc>> { pinnedView?.submit(it) }
     private val availableObserver = Observer<Boolean?> { update() }
 
-    private fun canShow(): Boolean =
+    /** Whether the user wants the panel open (it is only shown while [canShow]). */
+    val isWanted: Boolean
+        get() = wanted
+
+    /** Whether the switch is usable: chat mode and the stream has a chat, in any orientation. */
+    fun canSwitch(): Boolean =
         player.bulletCommentsController.isChatMode &&
             player.videoPlayerSelected() &&
-            player.isFullscreen &&
-            player.context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
             ChatStore.url != null &&
             ChatStore.available.value != false
 
+    /** Whether the panel itself may be on screen; independent of the switch being usable. */
+    private fun canShow(): Boolean =
+        canSwitch() &&
+            player.isFullscreen &&
+            player.context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     /** Visibility of the player's switch button while in chat mode. */
-    fun buttonVisibility(): Int = if (canShow()) View.VISIBLE else View.GONE
+    fun buttonVisibility(): Int = if (canSwitch()) View.VISIBLE else View.GONE
 
     /** Brings the button and the panel in line with the current state of the player. */
     fun update() {
         val binding = player.binding
         val show = canShow()
+        val switchable = canSwitch()
         if (player.bulletCommentsController.isChatMode) {
             binding.switchCommentsVisibility.visibility = buttonVisibility()
             binding.switchCommentsVisibility.setImageDrawable(
@@ -60,21 +70,19 @@ class ChatPanelController(private val player: Player) {
                 ),
             )
         }
+        // Keep observing while the switch is usable, so it appears once the chat becomes available.
+        if (switchable) startObserving() else stopObserving()
         if (show) {
-            startObserving()
             if (wanted != open) {
                 setOpen(wanted)
             }
-        } else {
-            stopObserving()
-            if (open) {
-                setOpen(false)
-            }
+        } else if (open) {
+            setOpen(false)
         }
     }
 
     fun toggle() {
-        if (canShow()) {
+        if (canSwitch()) {
             wanted = !wanted
             update()
         }

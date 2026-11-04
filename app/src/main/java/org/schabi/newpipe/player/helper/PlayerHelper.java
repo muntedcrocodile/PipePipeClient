@@ -562,6 +562,9 @@ public final class PlayerHelper {
     }
 
     public static boolean getSeekInsteadOfSkip(@NonNull final Context context) {
+        if (org.schabi.newpipe.player.playqueue.PersistentQueueManager.isEnabled(context)) {
+            return false;
+        }
         return getPreferences(context)
                 .getBoolean(context.getString(R.string.seek_on_media_button_events_key), false);
     }

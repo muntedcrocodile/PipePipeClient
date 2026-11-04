@@ -44,7 +44,7 @@ public class PlayQueueNavigator implements MediaSessionConnector.QueueNavigator 
 
     @Override
     public long getSupportedQueueNavigatorActions(@Nullable final Player player) {
-        if (seekInsteadOfSkip.getAsBoolean()) {
+        if (!callback.isPersistentQueueMode() && seekInsteadOfSkip.getAsBoolean()) {
             // advertise rewind/fast-forward (from the connector) instead of previous/next so
             // that the system notification shows the matching icons
             return ACTION_SKIP_TO_QUEUE_ITEM;

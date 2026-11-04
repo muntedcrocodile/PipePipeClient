@@ -16,7 +16,12 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceManager;
+import androidx.preference.SwitchPreferenceCompat;
+
+import com.nononsenseapps.filepicker.Utils;
 import org.schabi.newpipe.NewPipeDatabase;
+import org.schabi.newpipe.player.helper.PlayerHolder;
+import org.schabi.newpipe.player.playqueue.PersistentQueueManager;
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.extractor.NewPipe;
@@ -26,6 +31,8 @@ import org.schabi.newpipe.extractor.localization.Localization;
 import org.schabi.newpipe.local.subscription.SubscriptionManager;
 import org.schabi.newpipe.local.subscription.SubscriptionsImportExportHelper;
 import org.schabi.newpipe.streams.io.NoFileManagerSafeGuard;
+import org.schabi.newpipe.streams.io.StoredDirectoryHelper;
+import org.schabi.newpipe.util.FilePickerActivityHelper;
 import org.schabi.newpipe.streams.io.StoredFileHelper;
 import org.schabi.newpipe.util.NavigationHelper;
 import org.schabi.newpipe.util.PicassoHelper;
@@ -63,6 +70,14 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::requestImportPathResult);
     private final ActivityResultLauncher<Intent> requestExportPathLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::requestExportPathResult);
+    private final ActivityResultLauncher<Intent> requestScheduledBackupPathLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::requestScheduledBackupPathResult);
+    private final ActivityResultLauncher<Intent> importSettingsOnlyLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::importSettingsOnlyResult);
+    private final ActivityResultLauncher<Intent> exportSettingsOnlyLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::exportSettingsOnlyResult);
+    private SwitchPreferenceCompat scheduledBackupPreference;
+    private Preference scheduledBackupPathPreference;
 
     @Override
     public void onAttach(@NonNull final Context context) {
@@ -109,6 +124,33 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
             return true;
         });
 
+        scheduledBackupPreference = (SwitchPreferenceCompat) requirePreference(R.string.scheduled_backup_key);
+        scheduledBackupPathPreference = requirePreference(R.string.scheduled_backup_path_key);
+        updateScheduledBackupPathSummary();
+        scheduledBackupPreference.setOnPreferenceChangeListener((p, newValue) -> {
+            if ((Boolean) newValue && isBlank(defaultPreferences.getString(
+                    getString(R.string.scheduled_backup_path_key), null))) {
+                // turned on only after a folder is picked
+                launchScheduledBackupPathPicker();
+                return false;
+            }
+            // the new value is persisted after this listener returns
+            p.getPreferenceManager().getSharedPreferences().edit()
+                    .putBoolean(p.getKey(), (Boolean) newValue).apply();
+            ScheduledBackupWorker.schedule(requireContext());
+            return true;
+        });
+        scheduledBackupPathPreference.setOnPreferenceClickListener(p -> {
+            launchScheduledBackupPathPicker();
+            return true;
+        });
+        requirePreference(R.string.scheduled_backup_interval_key)
+                .setOnPreferenceChangeListener((p, newValue) -> {
+                    defaultPreferences.edit().putString(p.getKey(), (String) newValue).apply();
+                    ScheduledBackupWorker.schedule(requireContext());
+                    return true;
+                });
+
         final Preference importSubscriptionsPreference =
                 requirePreference(R.string.import_subscriptions_key);
         importSubscriptionsPreference.setOnPreferenceClickListener((final Preference p) -> {
@@ -132,6 +174,36 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
             return true;
         });
 
+        requirePreference(R.string.import_settings_only_key).setOnPreferenceClickListener(p -> {
+            NoFileManagerSafeGuard.launchSafe(
+                    importSettingsOnlyLauncher,
+                    StoredFileHelper.getPicker(requireContext(), "*/*", getImportExportDataUri()),
+                    TAG, getContext());
+            return true;
+        });
+        requirePreference(R.string.export_settings_only_key).setOnPreferenceClickListener(p -> {
+            NoFileManagerSafeGuard.launchSafe(
+                    exportSettingsOnlyLauncher,
+                    StoredFileHelper.getNewPicker(requireContext(),
+                            "PipePipeSettings-" + exportDateFormat.format(new Date())
+                                    + ".json",
+                            "application/json", getImportExportDataUri()),
+                    TAG, getContext());
+            return true;
+        });
+        requirePreference(R.string.reset_settings_key).setOnPreferenceClickListener(p -> {
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.reset_settings_title)
+                    .setMessage(R.string.reset_settings_confirmation)
+                    .setNegativeButton(R.string.cancel, null)
+                    .setPositiveButton(R.string.ok, (d, w) -> {
+                        manager.resetSettings(defaultPreferences);
+                        NavigationHelper.restartApp(requireActivity());
+                    })
+                    .show();
+            return true;
+        });
+
         final Preference clearSubscriptionsPreference =
                 requirePreference(R.string.clear_subscriptions_key);
         clearSubscriptionsPreference.setOnPreferenceClickListener((final Preference p) -> {
@@ -147,6 +219,57 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
 
     }
 
+    private void launchScheduledBackupPathPicker() {
+        NoFileManagerSafeGuard.launchSafe(
+                requestScheduledBackupPathLauncher,
+                StoredDirectoryHelper.getPicker(requireContext()),
+                TAG,
+                getContext()
+        );
+    }
+
+    private void requestScheduledBackupPathResult(final ActivityResult result) {
+        assureCorrectAppLanguage(getContext());
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null
+                || result.getData().getData() == null) {
+            return;
+        }
+        final Context context = requireContext();
+        Uri uri = result.getData().getData();
+        try {
+            if (FilePickerActivityHelper.isOwnFileUri(context, uri)) {
+                final File target = Utils.getFileForUri(uri);
+                if (!target.canWrite()) {
+                    throw new IOException("No write permissions on " + target);
+                }
+                uri = Uri.fromFile(target);
+            } else {
+                context.grantUriPermission(context.getPackageName(), uri,
+                        StoredDirectoryHelper.PERMISSION_FLAGS);
+                if (!new StoredDirectoryHelper(context, uri, null).canWrite()) {
+                    throw new IOException("No write permissions on " + uri);
+                }
+            }
+        } catch (final IOException e) {
+            Log.e(TAG, "Cannot use scheduled backup folder " + uri, e);
+            Toast.makeText(context, R.string.no_available_dir, Toast.LENGTH_LONG).show();
+            return;
+        }
+        defaultPreferences.edit()
+                .putString(getString(R.string.scheduled_backup_path_key), uri.toString())
+                .apply();
+        scheduledBackupPreference.setChecked(true);
+        updateScheduledBackupPathSummary();
+        ScheduledBackupWorker.schedule(context);
+    }
+
+    private void updateScheduledBackupPathSummary() {
+        final String path = defaultPreferences.getString(
+                getString(R.string.scheduled_backup_path_key), null);
+        scheduledBackupPathPreference.setSummary(
+                isBlank(path) ? null : Uri.decode(path));
+    }
+
     private void clearSubscriptions() {
         disposables.add(subscriptionManager.deleteAllSubscriptions()
                 .subscribe(
@@ -159,6 +282,50 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
     public void onDestroy() {
         disposables.clear();
         super.onDestroy();
+    }
+
+    private void exportSettingsOnlyResult(final ActivityResult result) {
+        assureCorrectAppLanguage(getContext());
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null
+                || result.getData().getData() == null) {
+            return;
+        }
+        final Uri uri = result.getData().getData();
+        final StoredFileHelper file =
+                new StoredFileHelper(getContext(), uri, "application/json");
+        disposables.add(Completable.fromAction(() ->
+                manager.exportSettingsOnly(defaultPreferences, file))
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(() -> {
+                    saveLastImportExportDataUri(uri);
+                    Toast.makeText(getContext(), R.string.export_complete_toast,
+                            Toast.LENGTH_SHORT).show();
+                }, e -> ErrorUtil.showUiErrorSnackbar(this, "Exporting settings", e)));
+    }
+
+    private void importSettingsOnlyResult(final ActivityResult result) {
+        assureCorrectAppLanguage(getContext());
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null
+                || result.getData().getData() == null) {
+            return;
+        }
+        final Uri uri = result.getData().getData();
+        final StoredFileHelper file = new StoredFileHelper(getContext(), uri, "*/*");
+        new AlertDialog.Builder(requireActivity())
+                .setMessage(R.string.override_current_data)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.ok, (d, id) ->
+                        disposables.add(Completable.fromAction(() ->
+                                manager.importSettingsOnly(defaultPreferences, file))
+                                .subscribeOn(Schedulers.io())
+                                .observeOn(AndroidSchedulers.mainThread())
+                                .subscribe(() -> finishImport(uri), e -> {
+                                    Log.e(TAG, "Importing settings", e);
+                                    Toast.makeText(getContext(), R.string.invalid_settings_file,
+                                            Toast.LENGTH_SHORT).show();
+                                })))
+                .show();
     }
 
     private void requestExportPathResult(final ActivityResult result) {
@@ -222,9 +389,16 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
                 throw new IOException("Could not create databases dir");
             }
 
+            // Freeze the live owner before stopping the service: its final progress callback
+            // and in-flight remote pages must never write over the imported queue.
+            PersistentQueueManager.getInstance(requireContext()).prepareForImport();
+            PlayerHolder.getInstance().stopService();
+            NewPipeDatabase.close();
+
             if (!manager.extractDb(file)) {
                 Toast.makeText(getContext(), R.string.could_not_import_all_files, Toast.LENGTH_LONG)
                         .show();
+                finishImport(importDataUri);
                 return;
             }
 
@@ -250,6 +424,9 @@ public class BackupSettingsFragment extends BasePreferenceFragment {
             }
         } catch (final Exception e) {
             ErrorUtil.showUiErrorSnackbar(this, "Importing database", e);
+            // Old writers were frozen before replacement. Reopen only in a fresh process,
+            // including after an unsuccessful import, rather than revive stale owners.
+            NavigationHelper.restartApp(requireActivity());
         }
     }
 

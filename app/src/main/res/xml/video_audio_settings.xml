@@ -3,6 +3,29 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:title="@string/settings_category_player_title">
 
+    <SwitchPreferenceCompat
+        android:key="@string/persistent_queue_enabled_key"
+        android:title="@string/persistent_queue_title"
+        android:summary="@string/persistent_queue_summary"
+        android:defaultValue="true"
+        app:iconSpaceReserved="false" />
+    <SwitchPreferenceCompat
+        android:key="@string/persistent_queue_visible_key"
+        android:title="@string/persistent_queue_visible_title"
+        android:summary="@string/persistent_queue_visible_summary"
+        android:dependency="@string/persistent_queue_enabled_key"
+        android:defaultValue="true"
+        app:iconSpaceReserved="false" />
+    <ListPreference
+        android:key="@string/persistent_queue_history_depth_key"
+        android:title="@string/persistent_queue_history_depth_title"
+        android:dependency="@string/persistent_queue_enabled_key"
+        android:defaultValue="20"
+        android:entries="@array/persistent_queue_history_depth_entries"
+        android:entryValues="@array/persistent_queue_history_depth_values"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
     <ListPreference
         android:defaultValue="@string/default_resolution_value"
         android:entries="@array/resolution_list_description"

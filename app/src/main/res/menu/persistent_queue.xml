@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/queue_view_save" android:title="@string/queue_view_save" />
+    <item android:id="@+id/queue_view_shuffle" android:title="@string/queue_view_shuffle" />
+    <item android:id="@+id/queue_view_clear" android:title="@string/queue_view_clear" />
+</menu>

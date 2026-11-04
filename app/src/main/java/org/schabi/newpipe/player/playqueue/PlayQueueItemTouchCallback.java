@@ -8,12 +8,27 @@ public abstract class PlayQueueItemTouchCallback extends ItemTouchHelper.SimpleC
     private static final int MAXIMUM_INITIAL_DRAG_VELOCITY = 25;
 
     public PlayQueueItemTouchCallback() {
-        super(ItemTouchHelper.UP | ItemTouchHelper.DOWN, ItemTouchHelper.RIGHT);
+        super(ItemTouchHelper.UP | ItemTouchHelper.DOWN, ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT);
     }
 
     public abstract void onMove(int sourceIndex, int targetIndex);
 
     public abstract void onSwiped(int index);
+
+    @Override
+    public int getMovementFlags(final RecyclerView recyclerView,
+                                final RecyclerView.ViewHolder holder) {
+        final RecyclerView.Adapter<?> adapter = holder.getBindingAdapter();
+        final int position = holder.getBindingAdapterPosition();
+        if (!(adapter instanceof PlayQueueAdapter)) {
+            return 0;
+        }
+        final PlayQueueAdapter queueAdapter = (PlayQueueAdapter) adapter;
+        return makeMovementFlags(queueAdapter.canDrag(position)
+                ? ItemTouchHelper.UP | ItemTouchHelper.DOWN : 0,
+                queueAdapter.isQueuePosition(position)
+                ? ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT : 0);
+    }
 
     @Override
     public int interpolateOutOfBoundsScroll(final RecyclerView recyclerView, final int viewSize,
@@ -33,8 +48,13 @@ public abstract class PlayQueueItemTouchCallback extends ItemTouchHelper.SimpleC
             return false;
         }
 
-        final int sourceIndex = source.getLayoutPosition();
-        final int targetIndex = target.getLayoutPosition();
+        final int sourceIndex = source.getBindingAdapterPosition();
+        final int targetIndex = target.getBindingAdapterPosition();
+        if (!(source.getBindingAdapter() instanceof PlayQueueAdapter)
+                || !((PlayQueueAdapter) source.getBindingAdapter()).canDrag(sourceIndex)
+                || !((PlayQueueAdapter) source.getBindingAdapter()).canDrag(targetIndex)) {
+            return false;
+        }
         onMove(sourceIndex, targetIndex);
         return true;
     }

@@ -23,6 +23,11 @@ public class PlayerMediaSession implements MediaSessionCallback {
     }
 
     @Override
+    public boolean isPersistentQueueMode() {
+        return player.isPersistentQueueMode();
+    }
+
+    @Override
     public void fastRewind() {
         player.fastRewind();
     }
@@ -34,7 +39,7 @@ public class PlayerMediaSession implements MediaSessionCallback {
 
     @Override
     public void playPrevious() {
-        if (PlayerHelper.getSeekInsteadOfSkip(player.getContext())) {
+        if (!isPersistentQueueMode() && PlayerHelper.getSeekInsteadOfSkip(player.getContext())) {
             player.fastRewind();
         } else {
             player.playPrevious();
@@ -43,7 +48,7 @@ public class PlayerMediaSession implements MediaSessionCallback {
 
     @Override
     public void playNext() {
-        if (PlayerHelper.getSeekInsteadOfSkip(player.getContext())) {
+        if (!isPersistentQueueMode() && PlayerHelper.getSeekInsteadOfSkip(player.getContext())) {
             player.fastForward();
         } else {
             player.playNext();
@@ -123,6 +128,11 @@ public class PlayerMediaSession implements MediaSessionCallback {
         player.pause();
     }
     public void changePlayMode() {
+        if (player.isPersistentQueueMode()) {
+            player.onShuffleClicked();
+            this.mode = 0;
+            return;
+        }
         int correctMode = this.mode; // this.mode change after the following calls
         exoPlayer.setShuffleModeEnabled(false);
         player.setRepeatMode(RepeatMode.OFF);

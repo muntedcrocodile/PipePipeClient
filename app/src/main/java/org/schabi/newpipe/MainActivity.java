@@ -42,6 +42,7 @@ import android.view.ViewGroup;
 import android.widget.*;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AppCompatActivity;
@@ -73,6 +74,7 @@ import org.schabi.newpipe.fragments.list.search.SearchFragment;
 import org.schabi.newpipe.local.feed.notifications.NotificationWorker;
 import org.schabi.newpipe.player.Player;
 import org.schabi.newpipe.player.PlayerIntentConstants;
+import org.schabi.newpipe.player.event.DetailPlayerEvents;
 import org.schabi.newpipe.player.event.OnKeyDownListener;
 import org.schabi.newpipe.player.helper.PlayerHolder;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
@@ -88,7 +90,6 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -110,7 +111,8 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean servicesShown = false;
 
-    private BroadcastReceiver broadcastReceiver;
+    @Nullable
+    private DetailPlayerEvents.Listener playerStartedListener;
 
     private static final int ITEM_ID_SUBSCRIPTIONS = -1;
     private static final int ITEM_ID_FEED = -2;
@@ -147,6 +149,8 @@ public class MainActivity extends AppCompatActivity {
 
         assureCorrectAppLanguage(this);
         super.onCreate(savedInstanceState);
+        org.schabi.newpipe.cast.CastReceiver.Companion.setEnabled(this,
+                org.schabi.newpipe.cast.CastReceiver.Companion.isEnabledByUser(this));
 
         mainBinding = ActivityMainBinding.inflate(getLayoutInflater());
         drawerLayoutBinding = mainBinding.drawerLayout;
@@ -214,6 +218,9 @@ public class MainActivity extends AppCompatActivity {
             dialog1.setOnDismissListener(new DialogInterface.OnDismissListener() {
                 @Override
                 public void onDismiss(DialogInterface dialog) {
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
                     if((storedVersionCode / 100 < 1110 && currentTime - lastShowDonationTime > 14 * 24 * 60 * 60 * 1000)
                             || currentTime - lastShowDonationTime > 30L * 24 * 60 * 60 * 1000) {
                         prefs.edit().putLong("last_show_donation_time", currentTime).apply();
@@ -231,15 +238,7 @@ public class MainActivity extends AppCompatActivity {
                 AnnouncementParser.ParsedResult result = parseContentsBeforeId(resp.responseBody(), lastAnnouncementId);
                 if(result.latestId != null) {
                     Handler handler = new Handler(Looper.getMainLooper());
-                    handler.post(() -> {
-                        AlertDialog.Builder builder3 = new AlertDialog.Builder(this);
-                        builder3.setMessage(result.contents);
-                        builder3.setTitle(R.string.announcement);
-                        builder3.setPositiveButton(R.string.ok, (dialog, which) -> {
-                            prefs.edit().putString("last_announcement_id", result.latestId).apply();
-                        });
-                        builder3.show();
-                    });
+                    handler.post(() -> showAnnouncement(result.contents, result.latestId));
                 }
             });
         } catch (Exception ignore) {
@@ -260,6 +259,19 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putInt("isFirstRun", 1).apply();
             PermissionChecker.checkNotificationPermission(this);
         }
+    }
+
+    private void showAnnouncement(final String contents, final String latestId) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(contents);
+        builder.setTitle(R.string.announcement);
+        builder.setPositiveButton(R.string.ok, (dialog, which) ->
+                PreferenceManager.getDefaultSharedPreferences(this).edit()
+                        .putString("last_announcement_id", latestId).apply());
+        builder.show();
     }
 
     private void setupDrawer() throws ExtractionException {
@@ -531,8 +543,8 @@ public class MainActivity extends AppCompatActivity {
         if (!isChangingConfigurations()) {
             StateSaver.clearStateFiles();
         }
-        if (broadcastReceiver != null) {
-            unregisterReceiver(broadcastReceiver);
+        if (playerStartedListener != null) {
+            DetailPlayerEvents.removeListener(playerStartedListener);
         }
     }
 
@@ -859,7 +871,9 @@ public class MainActivity extends AppCompatActivity {
                                 VideoDetailFragment.KEY_SWITCHING_PLAYERS, false);
                         NavigationHelper.openVideoDetailFragment(
                                 getApplicationContext(), getSupportFragmentManager(),
-                                serviceId, url, title, playQueue, switchingPlayers);
+                                serviceId, url, title, playQueue, switchingPlayers,
+                                intent.getBooleanExtra(
+                                        VideoDetailFragment.KEY_FORCE_PLAY_FULLSCREEN, false));
                         break;
                     case CHANNEL:
                         NavigationHelper.openChannelFragment(getSupportFragmentManager(),
@@ -912,27 +926,17 @@ public class MainActivity extends AppCompatActivity {
             // if the player is already open, no need for a broadcast receiver
             openMiniPlayerIfMissing();
         } else {
-            // listen for player start intent being sent around
-            broadcastReceiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(final Context context, final Intent intent) {
-                    if (Objects.equals(intent.getAction(),
-                            VideoDetailFragment.ACTION_PLAYER_STARTED)) {
-                        openMiniPlayerIfMissing();
-                        // At this point the player is added 100%, we can unregister. Other actions
-                        // are useless since the fragment will not be removed after that.
-                        unregisterReceiver(broadcastReceiver);
-                        broadcastReceiver = null;
-                    }
+            // listen for the player being started
+            playerStartedListener = event -> {
+                if (event == DetailPlayerEvents.Event.PlayerStarted.INSTANCE) {
+                    openMiniPlayerIfMissing();
+                    // At this point the player is added 100%, we can stop listening. Other events
+                    // are useless since the fragment will not be removed after that.
+                    DetailPlayerEvents.removeListener(playerStartedListener);
+                    playerStartedListener = null;
                 }
             };
-            final IntentFilter intentFilter = new IntentFilter();
-            intentFilter.addAction(VideoDetailFragment.ACTION_PLAYER_STARTED);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(broadcastReceiver, intentFilter, Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(broadcastReceiver, intentFilter);
-            }
+            DetailPlayerEvents.addListener(playerStartedListener);
         }
     }
 

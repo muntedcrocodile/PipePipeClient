@@ -33,6 +33,12 @@ final class PlaybackListenerAdapter implements PlaybackListener {
     }
 
     @Override
+    public void onPlaybackFailure(final Throwable error) {
+        player.getPersistentQueueController().playbackFailed();
+        player.getPersistentQueueController().failure(error);
+    }
+
+    @Override
     public void onPlaybackBlock() {
         player.onPlaybackBlock();
     }

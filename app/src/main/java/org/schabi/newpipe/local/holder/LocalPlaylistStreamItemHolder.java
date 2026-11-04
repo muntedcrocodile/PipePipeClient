@@ -15,8 +15,9 @@ import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.ktx.ViewUtils;
 import org.schabi.newpipe.local.LocalItemBuilder;
 import org.schabi.newpipe.local.history.HistoryRecordManager;
-import org.schabi.newpipe.util.PicassoHelper;
 import org.schabi.newpipe.util.Localization;
+import org.schabi.newpipe.util.dearrow.DeArrowBinder;
+import org.schabi.newpipe.util.dearrow.DeArrowRow;
 import org.schabi.newpipe.views.AnimatedProgressBar;
 
 import java.time.format.DateTimeFormatter;
@@ -71,7 +72,14 @@ public class LocalPlaylistStreamItemHolder extends LocalItemHolder {
             itemDurationView.setBackgroundColor(ContextCompat.getColor(itemBuilder.getContext(),
                     R.color.paid_video_background_color));
             itemDurationView.setVisibility(View.VISIBLE);
-            itemProgressView.setVisibility(View.GONE);
+            if (item.getProgressMillis() > 0 && item.getStreamEntity().getDuration() > 0) {
+                itemProgressView.setVisibility(View.VISIBLE);
+                itemProgressView.setMax((int) item.getStreamEntity().getDuration());
+                itemProgressView.setProgress((int) TimeUnit.MILLISECONDS
+                        .toSeconds(item.getProgressMillis()));
+            } else {
+                itemProgressView.setVisibility(View.GONE);
+            }
         } else if (item.getStreamEntity().getDuration() > 0) {
             itemDurationView.setText(Localization
                     .getDurationString(item.getStreamEntity().getDuration()));
@@ -92,8 +100,11 @@ public class LocalPlaylistStreamItemHolder extends LocalItemHolder {
         }
 
         // Default thumbnail is shown on error, while loading and if the url is empty
-        PicassoHelper.loadScaledDownThumbnail(itemBuilder.getContext(), item.getStreamEntity().getThumbnailUrl())
-                .into(itemThumbnailView);
+        DeArrowBinder.bind(DeArrowRow.fromStored(
+                item.getStreamEntity().getServiceId(),
+                item.getStreamEntity().getUrl(),
+                item.getStreamEntity().getThumbnailUrl()),
+                itemVideoTitleView, itemThumbnailView);
 
         itemView.setOnClickListener(view -> {
             if (itemBuilder.getOnItemSelectedListener() != null) {
@@ -120,8 +131,7 @@ public class LocalPlaylistStreamItemHolder extends LocalItemHolder {
         }
         final PlaylistStreamEntry item = (PlaylistStreamEntry) localItem;
 
-        if (!item.getStreamEntity().isPaid()
-                && item.getProgressMillis() > 0
+        if (item.getProgressMillis() > 0
                 && item.getStreamEntity().getDuration() > 0) {
             itemProgressView.setMax((int) item.getStreamEntity().getDuration());
             if (itemProgressView.getVisibility() == View.VISIBLE) {

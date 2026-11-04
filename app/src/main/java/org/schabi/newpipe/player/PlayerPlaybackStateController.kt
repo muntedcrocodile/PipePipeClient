@@ -11,6 +11,7 @@ import org.schabi.newpipe.R
 import org.schabi.newpipe.ktx.AnimationType
 import org.schabi.newpipe.ktx.animate
 import org.schabi.newpipe.player.helper.PlayerHelper
+import java.util.UUID
 
 /**
  * Owns the playback state machine of a [Player].
@@ -23,7 +24,20 @@ import org.schabi.newpipe.player.helper.PlayerHelper
  */
 class PlayerPlaybackStateController(private val player: Player) {
 
+    private var playWhenReadyChangeToken: String? = null
+    private var playWhenReadyOccurrenceId: String? = null
+
+    /** Transport changes exist even while the initial source has not reached STATE_READY. */
+    fun getPlayWhenReadyChangeToken(occurrenceId: String?): String? =
+        if (occurrenceId != null && occurrenceId == playWhenReadyOccurrenceId) {
+            playWhenReadyChangeToken
+        } else {
+            null
+        }
+
     fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        playWhenReadyOccurrenceId = player.playQueue?.getItem()?.uuid
+        playWhenReadyChangeToken = UUID.randomUUID().toString()
         if (Player.DEBUG) {
             Log.d(
                 Player.TAG, "ExoPlayer - onPlayWhenReadyChanged() called with: " +
@@ -35,6 +49,7 @@ class PlayerPlaybackStateController(private val player: Player) {
         } else {
             player.simpleExoPlayer.playbackState
         }
+        if (!playWhenReady) player.persistentQueueController.checkpoint()
         updatePlaybackState(playWhenReady, playbackState)
     }
 
@@ -95,6 +110,10 @@ class PlayerPlaybackStateController(private val player: Player) {
             }
 
             com.google.android.exoplayer2.Player.STATE_ENDED -> { // 4
+                if (player.isPersistentQueueMode) {
+                    player.persistentQueueController.consume(true)
+                    return
+                }
                 changeState(PlayerPlaybackState.COMPLETED)
                 player.saveStreamProgressStateCompleted()
                 player.isPrepared = false
@@ -404,12 +423,16 @@ class PlayerPlaybackStateController(private val player: Player) {
             return
         }
 
-        if (!showQueueButtons || playQueue.index > 0) {
+        val showPrevious = QueuePlaybackPolicy.showPrevious(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
+        val showNext = QueuePlaybackPolicy.showNext(player.isPersistentQueueMode,
+            playQueue.index, playQueue.size())
+        if (!showQueueButtons || showPrevious) {
             player.binding.playPreviousButton.animate(
                 showQueueButtons, duration.toLong(), AnimationType.SCALE_AND_ALPHA
             )
         }
-        if (!showQueueButtons || playQueue.index + 1 < playQueue.streams.size) {
+        if (!showQueueButtons || showNext) {
             player.binding.playNextButton.animate(
                 showQueueButtons, duration.toLong(), AnimationType.SCALE_AND_ALPHA
             )

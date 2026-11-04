@@ -9,6 +9,9 @@ import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.player.mediaitem.PlayerMediaItem;
 
 public interface PlaybackListener {
+    /** Persistent sources fail in place and wait for a transport retry. */
+    default void onPlaybackFailure(final Throwable error) { }
+
     /**
      * Called to check if the currently playing stream is approaching the end of its playback.
      * Implementation should return true when the current playback position is progressing within
