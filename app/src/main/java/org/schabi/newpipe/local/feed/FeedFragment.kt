@@ -1149,9 +1149,10 @@ class FeedFragment : BaseStateFragment<FeedState>(), BackPressable {
     override fun reloadContent() {
         hideNewItemsLoaded(false)
 
-        getActivity()?.startService(
+        context?.startService(
             Intent(requireContext(), FeedLoadService::class.java).apply {
                 putExtra(FeedLoadService.EXTRA_GROUP_ID, groupId)
+                putExtra(FeedLoadService.EXTRA_FORCE_REFRESH, true)
             }
         )
         listState = null

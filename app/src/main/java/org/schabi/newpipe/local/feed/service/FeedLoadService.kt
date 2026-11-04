@@ -33,6 +33,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Flowable
+import io.reactivex.rxjava3.core.Notification
+import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.functions.Function
 import org.schabi.newpipe.App
@@ -57,6 +59,16 @@ class FeedLoadService : Service() {
         private const val NOTIFICATION_SAMPLING_PERIOD = 1500
 
         const val EXTRA_GROUP_ID: String = "FeedLoadService.EXTRA_GROUP_ID"
+        const val EXTRA_FORCE_REFRESH: String = "FeedLoadService.EXTRA_FORCE_REFRESH"
+
+        /** Decode the service command at the loader boundary; background requests stay throttled. */
+        internal fun loadRequestedFeed(
+            intent: Intent,
+            load: (Long, Boolean) -> Single<List<Notification<FeedUpdateInfo>>>,
+        ): Single<List<Notification<FeedUpdateInfo>>> = load(
+            intent.getLongExtra(EXTRA_GROUP_ID, FeedGroupEntity.GROUP_ALL_ID),
+            intent.getBooleanExtra(EXTRA_FORCE_REFRESH, false),
+        )
     }
 
     private var loadingDisposable: Disposable? = null
@@ -89,8 +101,7 @@ class FeedLoadService : Service() {
         setupNotification()
         setupBroadcastReceiver()
 
-        val groupId = intent.getLongExtra(EXTRA_GROUP_ID, FeedGroupEntity.GROUP_ALL_ID)
-        loadingDisposable = feedLoadManager.startLoading(groupId)
+        loadingDisposable = loadRequestedFeed(intent, feedLoadManager::startLoading)
             .observeOn(AndroidSchedulers.mainThread())
             .doOnSubscribe {
                 startForeground(NOTIFICATION_ID, notificationBuilder.build())
