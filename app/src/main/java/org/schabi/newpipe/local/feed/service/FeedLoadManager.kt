@@ -1,6 +1,7 @@
 package org.schabi.newpipe.local.feed.service
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.preference.PreferenceManager
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
@@ -14,6 +15,7 @@ import io.reactivex.rxjava3.schedulers.Schedulers
 import org.schabi.newpipe.R
 import org.schabi.newpipe.database.feed.model.FeedGroupEntity
 import org.schabi.newpipe.database.subscription.NotificationMode
+import org.schabi.newpipe.database.subscription.SubscriptionEntity
 import org.schabi.newpipe.extractor.Info
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.feed.FeedInfo
@@ -126,133 +128,8 @@ class FeedLoadManager(private val context: Context) {
             .parallel(PARALLEL_EXTRACTIONS, PARALLEL_EXTRACTIONS * 2)
             .runOn(Schedulers.io(), PARALLEL_EXTRACTIONS * 2)
             .filter { !cancelSignal.get() }
-            .concatMap { subscriptionEntity ->
-                val serviceId = subscriptionEntity.serviceId
-                val delay = getServiceDelay(serviceId)
-                val lastFetch = lastFetchTimePerService[serviceId] ?: 0L
-                val now = System.currentTimeMillis()
-                val wait = maxOf(0, delay - (now - lastFetch))
-
-                Flowable.just(subscriptionEntity)
-                    .delay(wait, TimeUnit.MILLISECONDS)
-                    .map {
-                        lastFetchTimePerService[serviceId] = System.currentTimeMillis()
-                        it
-                    }
-                    .flatMap { sub ->
-                        Flowable.defer {
-                            var error: Throwable? = null
-                            val storeOriginalErrorAndRethrow = { e: Throwable ->
-                                Log.e(TAG, "Failed to extract from channel '${subscriptionEntity.name}' (${subscriptionEntity.serviceId}:${subscriptionEntity.url}): ${e.javaClass.simpleName}: ${e.message}", e)
-                                error = e
-                                throw e
-                            }
-
-                            try {
-                                // check for and load new streams
-                                // either by using the dedicated feed method or by getting the channel info
-                                var originalInfo: Info? = null
-                                var streams: List<StreamInfoItem>? = null
-                                val errors = ArrayList<Throwable>()
-
-                                if (useFeedExtractor) {
-                                    NewPipe.getService(subscriptionEntity.serviceId)
-                                        .getFeedExtractor(subscriptionEntity.url)
-                                        ?.also { feedExtractor ->
-                                            // the user wants to use a feed extractor and there is one, use it
-                                            val feedInfo = FeedInfo.getInfo(feedExtractor)
-                                            errors.addAll(feedInfo.errors)
-                                            originalInfo = feedInfo
-                                            streams = feedInfo.relatedItems
-                                        }
-                                }
-
-                                if (originalInfo == null) {
-                                    // use the normal channel tabs extractor if either the user wants it, or
-                                    // the current service does not have a dedicated feed extractor
-
-                                    val channelInfo = getChannelInfo(
-                                        subscriptionEntity.serviceId,
-                                        subscriptionEntity.url, true
-                                    )
-                                        .onErrorReturn(storeOriginalErrorAndRethrow)
-                                        .blockingGet()
-                                    errors.addAll(channelInfo.errors)
-                                    originalInfo = channelInfo
-
-                                    streams = channelInfo.tabs
-                                        .filter { tab ->
-                                            ChannelTabHelper.fetchFeedChannelTab(
-                                                context,
-                                                defaultSharedPreferences,
-                                                tab
-                                            )
-                                        }
-                                        .map {
-                                            Pair(
-                                                getChannelTab(subscriptionEntity.serviceId, it, true)
-                                                    .onErrorReturn(storeOriginalErrorAndRethrow)
-                                                    .blockingGet(),
-                                                it
-                                            )
-                                        }
-                                        .flatMap { (channelTabInfo, linkHandler) ->
-                                            errors.addAll(channelTabInfo.errors)
-                                            if (channelTabInfo.relatedItems.isEmpty()) {
-                                                if (channelTabInfo.nextPage == null) {
-                                                    return@flatMap emptyList()
-                                                }
-                                                val infoItemsPage = getMoreChannelTabItems(
-                                                    subscriptionEntity.serviceId,
-                                                    linkHandler, channelTabInfo.nextPage
-                                                )
-                                                    .blockingGet()
-                                                errors.addAll(infoItemsPage.errors)
-                                                return@flatMap infoItemsPage.items
-                                            } else {
-                                                return@flatMap channelTabInfo.relatedItems
-                                            }
-                                        }
-                                        .filterIsInstance<StreamInfoItem>()
-                                }
-                                streams = streams?.filterNot { it.isRoundPlayStream || (filterFutureItems && it.uploadDate != null && it.uploadDate!!.offsetDateTime().isAfter(OffsetDateTime.now())) }
-
-                                return@defer Flowable.just(
-                                    FeedUpdateInfo(
-                                        subscriptionEntity,
-                                        originalInfo!!,
-                                        streams!!,
-                                        errors,
-                                    )
-                                )
-                            } catch (e: Throwable) {
-                                // Actually throw the exception to trigger retry
-                                val request = "${sub.serviceId}:${sub.url}"
-                                val wrapper = FeedLoadService.RequestException(
-                                    sub.uid,
-                                    request,
-                                    error ?: e
-                                )
-                                throw wrapper
-                            }
-                        }
-                            .retry { retryCount, throwable ->
-                                // Check if it's the actual wrapped exception
-                                val actualException = when (throwable) {
-                                    is FeedLoadService.RequestException -> throwable.cause
-                                    else -> throwable
-                                }
-                                false
-                            }
-                            // Now wrap in Notification AFTER retry logic
-                            .map { feedUpdateInfo ->
-                                Notification.createOnNext(feedUpdateInfo)
-                            }
-                            .onErrorReturn { error ->
-                                Notification.createOnError<FeedUpdateInfo>(error)
-                            }
-                    }
-
+            .concatMap { subscription ->
+                loadSubscription(subscription, useFeedExtractor, filterFutureItems, defaultSharedPreferences)
             }
 
             .sequential()
@@ -265,6 +142,143 @@ class FeedLoadManager(private val context: Context) {
             .toList()
             .flatMap { x -> postProcessFeed().toSingleDefault(x.flatten()) }
     }
+
+    /** Keep service lookup, scheduling and extraction failures local to this subscription. */
+    internal fun loadSubscription(
+        subscriptionEntity: SubscriptionEntity,
+        useFeedExtractor: Boolean,
+        filterFutureItems: Boolean,
+        defaultSharedPreferences: SharedPreferences,
+    ): Flowable<Notification<FeedUpdateInfo>> = Flowable.defer {
+        val serviceId = subscriptionEntity.serviceId
+        val delay = getServiceDelay(serviceId)
+        val lastFetch = lastFetchTimePerService[serviceId] ?: 0L
+        val now = System.currentTimeMillis()
+        val wait = maxOf(0, delay - (now - lastFetch))
+
+        Flowable.just(subscriptionEntity)
+            .delay(wait, TimeUnit.MILLISECONDS)
+            .map {
+                lastFetchTimePerService[serviceId] = System.currentTimeMillis()
+                it
+            }
+            .flatMap { sub ->
+                Flowable.defer {
+                    var error: Throwable? = null
+                    val storeOriginalErrorAndRethrow = { e: Throwable ->
+                        Log.e(TAG, "Failed to extract from channel '${subscriptionEntity.name}' (${subscriptionEntity.serviceId}:${subscriptionEntity.url}): ${e.javaClass.simpleName}: ${e.message}", e)
+                        error = e
+                        throw e
+                    }
+
+                    try {
+                        // check for and load new streams
+                        // either by using the dedicated feed method or by getting the channel info
+                        var originalInfo: Info? = null
+                        var streams: List<StreamInfoItem>? = null
+                        val errors = ArrayList<Throwable>()
+
+                        if (useFeedExtractor) {
+                            NewPipe.getService(subscriptionEntity.serviceId)
+                                .getFeedExtractor(subscriptionEntity.url)
+                                ?.also { feedExtractor ->
+                                    // the user wants to use a feed extractor and there is one, use it
+                                    val feedInfo = FeedInfo.getInfo(feedExtractor)
+                                    errors.addAll(feedInfo.errors)
+                                    originalInfo = feedInfo
+                                    streams = feedInfo.relatedItems
+                                }
+                        }
+
+                        if (originalInfo == null) {
+                            // use the normal channel tabs extractor if either the user wants it, or
+                            // the current service does not have a dedicated feed extractor
+
+                            val channelInfo = getChannelInfo(
+                                subscriptionEntity.serviceId,
+                                subscriptionEntity.url, true
+                            )
+                                .onErrorReturn(storeOriginalErrorAndRethrow)
+                                .blockingGet()
+                            errors.addAll(channelInfo.errors)
+                            originalInfo = channelInfo
+
+                            streams = channelInfo.tabs
+                                .filter { tab ->
+                                    ChannelTabHelper.fetchFeedChannelTab(
+                                        context,
+                                        defaultSharedPreferences,
+                                        tab
+                                    )
+                                }
+                                .map {
+                                    Pair(
+                                        getChannelTab(subscriptionEntity.serviceId, it, true)
+                                            .onErrorReturn(storeOriginalErrorAndRethrow)
+                                            .blockingGet(),
+                                        it
+                                    )
+                                }
+                                .flatMap { (channelTabInfo, linkHandler) ->
+                                    errors.addAll(channelTabInfo.errors)
+                                    if (channelTabInfo.relatedItems.isEmpty()) {
+                                        if (channelTabInfo.nextPage == null) {
+                                            return@flatMap emptyList()
+                                        }
+                                        val infoItemsPage = getMoreChannelTabItems(
+                                            subscriptionEntity.serviceId,
+                                            linkHandler, channelTabInfo.nextPage
+                                        )
+                                            .blockingGet()
+                                        errors.addAll(infoItemsPage.errors)
+                                        return@flatMap infoItemsPage.items
+                                    } else {
+                                        return@flatMap channelTabInfo.relatedItems
+                                    }
+                                }
+                                .filterIsInstance<StreamInfoItem>()
+                        }
+                        streams = streams?.filterNot { it.isRoundPlayStream || (filterFutureItems && it.uploadDate != null && it.uploadDate!!.offsetDateTime().isAfter(OffsetDateTime.now())) }
+
+                        return@defer Flowable.just(
+                            FeedUpdateInfo(
+                                subscriptionEntity,
+                                originalInfo!!,
+                                streams!!,
+                                errors,
+                            )
+                        )
+                    } catch (e: Throwable) {
+                        // Actually throw the exception to trigger retry
+                        val request = "${sub.serviceId}:${sub.url}"
+                        val wrapper = FeedLoadService.RequestException(
+                            sub.uid,
+                            request,
+                            error ?: e
+                        )
+                        throw wrapper
+                    }
+                }
+                    .retry { retryCount, throwable ->
+                        // Check if it's the actual wrapped exception
+                        val actualException = when (throwable) {
+                            is FeedLoadService.RequestException -> throwable.cause
+                            else -> throwable
+                        }
+                        false
+                    }
+
+            }
+    }.map { Notification.createOnNext(it) }
+        .onErrorReturn { error ->
+            val requestError = if (error is FeedLoadService.RequestException) error else
+                FeedLoadService.RequestException(
+                    subscriptionEntity.uid,
+                    "${subscriptionEntity.serviceId}:${subscriptionEntity.url}",
+                    error,
+                )
+            Notification.createOnError<FeedUpdateInfo>(requestError)
+        }
 
     fun cancel() {
         cancelSignal.set(true)
