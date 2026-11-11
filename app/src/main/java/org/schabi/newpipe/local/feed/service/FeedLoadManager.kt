@@ -172,13 +172,6 @@ class FeedLoadManager(private val context: Context) {
             }
             .flatMap { sub ->
                 Flowable.defer {
-                    var error: Throwable? = null
-                    val storeOriginalErrorAndRethrow = { e: Throwable ->
-                        Log.e(TAG, "Failed to extract from channel '${subscriptionEntity.name}' (${subscriptionEntity.serviceId}:${subscriptionEntity.url}): ${e.javaClass.simpleName}: ${e.message}", e)
-                        error = e
-                        throw e
-                    }
-
                     try {
                         // check for and load new streams
                         // either by using the dedicated feed method or by getting the channel info
@@ -262,7 +255,7 @@ class FeedLoadManager(private val context: Context) {
                         val wrapper = FeedLoadService.RequestException(
                             sub.uid,
                             request,
-                            error ?: e
+                            e
                         )
                         throw wrapper
                     }
