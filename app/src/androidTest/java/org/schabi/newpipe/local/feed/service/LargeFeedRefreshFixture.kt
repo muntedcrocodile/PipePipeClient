@@ -90,7 +90,8 @@ class LargeFeedRefreshFixture : AutoCloseable {
         }
     }
 
-    fun refresh() {
+    fun seedSubscriptions() {
+        if (database.subscriptionDAO().rowCount().blockingFirst() == 1000L) return
         val subscriptions = (0 until 1000).map { index ->
             SubscriptionEntity().apply {
                 serviceId = 0
@@ -101,6 +102,12 @@ class LargeFeedRefreshFixture : AutoCloseable {
         database.subscriptionDAO().insertAll(subscriptions)
         assertEquals(1000L, database.subscriptionDAO().rowCount().blockingFirst())
         assertEquals(1000, subscriptions.map { it.url }.distinct().size)
+    }
+
+    fun requestCount(): Int = requests.get()
+
+    fun refresh() {
+        seedSubscriptions()
         val started = android.os.SystemClock.elapsedRealtime()
         val heartbeatFailure = AtomicReference<String>()
         val heartbeatSamples = AtomicInteger()
