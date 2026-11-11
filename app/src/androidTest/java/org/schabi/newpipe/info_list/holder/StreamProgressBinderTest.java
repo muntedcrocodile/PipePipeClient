@@ -98,6 +98,8 @@ public class StreamProgressBinderTest {
             final var binder = new AtomicReference<StreamProgressBinder>();
             main(() -> {
                 progress.set(new AnimatedProgressBar(context));
+                // Match the determinate progress widget declared in the row layouts.
+                progress.get().setIndeterminate(false);
                 binder.set(new StreamProgressBinder(progress.get()));
             });
             try { check.run(binder.get(), progress.get(), context); }
