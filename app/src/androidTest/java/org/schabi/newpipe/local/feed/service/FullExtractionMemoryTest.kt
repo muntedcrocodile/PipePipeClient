@@ -17,11 +17,15 @@ class FullExtractionMemoryTest {
         LargeFeedRefreshFixture(true).use { fixture ->
             fixture.seedSubscriptions(6)
             val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val initial = FeedLoadManager(context).startLoading(
+                ignoreOutdatedThreshold = true).blockingGet()
+            assertEquals(6, initial.size)
+            assertTrue(initial.all { it.isOnNext && it.value!!.newStreams.isNotEmpty() })
             // Manual refresh uses this mode: work must be consumed/stored despite no retained list.
             val discarded = FeedLoadManager(context).startLoading(
                 ignoreOutdatedThreshold = true, retainResults = false).blockingGet()
             assertTrue(discarded.isEmpty())
-            assertEquals(12, fixture.requestCount())
+            assertEquals(24, fixture.requestCount())
             val count = fixture.storedStreamCount()
             assertTrue(count >= 6 * 20)
             // The notification caller still gets complete per-channel results after storage.
@@ -31,7 +35,7 @@ class FullExtractionMemoryTest {
             assertTrue(retained.all { it.isOnNext && it.value!!.streams.isNotEmpty() })
             assertTrue(retained.all { it.value!!.newStreams.isEmpty() })
             assertEquals(count, fixture.storedStreamCount())
-            assertEquals(24, fixture.requestCount())
+            assertEquals(36, fixture.requestCount())
         }
     }
 
