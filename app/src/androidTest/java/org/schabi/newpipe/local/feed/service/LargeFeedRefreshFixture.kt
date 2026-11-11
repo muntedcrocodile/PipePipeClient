@@ -42,21 +42,30 @@ class LargeFeedRefreshFixture : AutoCloseable {
     private val hadPreference = preferences.contains(preferenceKey)
     private val oldPreference = preferences.getBoolean(preferenceKey, false)
     private val requests = AtomicInteger()
+    private val arguments = InstrumentationRegistry.getArguments()
+    private val entriesPerChannel = arguments.getString("entriesPerChannel", "20")!!.toInt()
+        .also { require(it in 20..200) }
+    private val databaseName = if (arguments.getString("diskDatabase", "false") == "true")
+        "refresh-ui-synthetic-${System.nanoTime()}.db" else null
     private val database: AppDatabase
 
     init {
         check(context.packageName.endsWith(".queue.devicetest.refresh")) {
             "Run only in a fresh .queue.devicetest.refresh diagnostic installation"
         }
-        database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-            .addCallback(object : RoomDatabase.Callback() {
+        val builder = if (databaseName == null)
+            Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        else Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
+        database = builder.addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {
                     // Match the production callback needed by the enabled persistent player queue.
+                    if (databaseName != null) db.execSQL("PRAGMA synchronous=FULL")
                     PersistentQueueStore.createTable(db)
                 }
             }).build()
         try {
         databaseField.set(null, database)
+        Log.i("LargeFeedRefresh", "databaseMode=${if (databaseName == null) "memory" else "disk-FULL"} entriesPerChannel=$entriesPerChannel")
         check(preferences.edit().putBoolean(preferenceKey, true).commit())
         NewPipe.init(object : Downloader() {
             override fun executeAsync(request: Request, callback: AsyncCallback): CancellableCall =
@@ -77,8 +86,8 @@ class LargeFeedRefreshFixture : AutoCloseable {
                 val id = url.substringAfter("channel_id=")
                 val ordinal = id.takeLast(4).toInt()
                 requests.incrementAndGet()
-                val entries = (0 until 20).joinToString("") { entry ->
-                    val video = "q" + (ordinal * 20 + entry).toString().padStart(10, '0')
+                val entries = (0 until entriesPerChannel).joinToString("") { entry ->
+                    val video = "q" + (ordinal * entriesPerChannel + entry).toString().padStart(10, '0')
                     """<entry><title>Synthetic entry $entry</title>
                     <link href="https://www.youtube.com/watch?v=$video"/>
                     <author><name>Synthetic channel</name><uri>https://www.youtube.com/channel/$id</uri></author>
@@ -144,9 +153,9 @@ class LargeFeedRefreshFixture : AutoCloseable {
         assertEquals(1000, results.size)
         assertTrue("Synthetic RSS extraction failed", results.all { it.isOnNext })
         assertTrue("Extraction reported partial errors", results.all { it.value!!.errors.isEmpty() })
-        assertTrue("Missing parsed entries", results.all { it.value!!.streams.size == 20 })
-        assertEquals(20000, results.flatMap { it.value!!.streams }.map { it.url }.distinct().size)
-        Log.i("LargeFeedRefresh", "subscriptions=1000 distinct=1000 entries=20000 results=${results.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
+        assertTrue("Missing parsed entries", results.all { it.value!!.streams.size == entriesPerChannel })
+        assertEquals(1000 * entriesPerChannel, results.flatMap { it.value!!.streams }.map { it.url }.distinct().size)
+        Log.i("LargeFeedRefresh", "subscriptions=1000 distinct=1000 entries=${1000 * entriesPerChannel} results=${results.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
     }
 
     override fun close() {
@@ -157,7 +166,9 @@ class LargeFeedRefreshFixture : AutoCloseable {
                 databaseField.set(null, previousDatabase)
             } finally {
                 try {
-                    database.close()
+                    try { database.close() } finally {
+                        databaseName?.let { check(context.deleteDatabase(it)) { "Could not remove synthetic database" } }
+                    }
                 } finally {
                     try {
                         val editor = preferences.edit()
