@@ -30,6 +30,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Diagnostic original-UI scenario; no production behavior is modified by this test. */
 @RunWith(AndroidJUnit4::class)
@@ -91,13 +92,21 @@ class MainActivityRefreshReproTest {
                 repeat(5) { cycle ->
                     val completed = CountDownLatch(1)
                     val failure = AtomicReference<Throwable>()
+                    val requested = AtomicBoolean()
+                    val started = AtomicBoolean()
                     val events = FeedEventManager.events().subscribe { event ->
                         when (event) {
+                            is FeedEventManager.Event.ProgressEvent -> {
+                                if (requested.get() && event.maxProgress == 1000 && event.currentProgress == 0) started.set(true)
+                            }
                             is FeedEventManager.Event.SuccessResultEvent -> {
+                                // BehaviorProcessor replays the previous cycle's result to new observers.
+                                if (!started.get()) return@subscribe
                                 if (event.itemsErrors.isNotEmpty()) failure.set(AssertionError("Feed errors: ${event.itemsErrors.size}"))
                                 completed.countDown()
                             }
                             is FeedEventManager.Event.ErrorResultEvent -> {
+                                if (!requested.get()) return@subscribe
                                 failure.set(event.error)
                                 completed.countDown()
                             }
@@ -110,6 +119,7 @@ class MainActivityRefreshReproTest {
                         onMain {
                             before = PlayerHolder.getInstance().player!!.currentPosition
                             // The real refresh button calls FeedFragment.reloadContent -> service.
+                            requested.set(true)
                             assertTrue(feed!!.requireView().findViewById<View>(R.id.refreshIcon).performClick())
                         }
                         val deadline = SystemClock.elapsedRealtime() + cycleTimeoutSeconds * 1000
