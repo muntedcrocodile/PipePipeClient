@@ -139,18 +139,32 @@ class MainActivityRefreshReproTest {
                         onMain { }
                         Thread.sleep(300)
                     } finally {
-                        events.dispose()
+                        // A heartbeat assertion must not close Room while the real service still writes.
+                        try {
+                            check(completed.await(180, TimeUnit.SECONDS)) { "Refresh did not quiesce for cleanup" }
+                        } finally {
+                            events.dispose()
+                        }
                     }
                 }
             } finally {
                 heartbeat.cancel(true)
                 monitor.shutdownNow()
                 monitor.awaitTermination(3, TimeUnit.SECONDS)
+                var stoppedPlayer: org.schabi.newpipe.player.Player? = null
                 onMain {
+                    stoppedPlayer = PlayerHolder.getInstance().player
                     instrumentation.targetContext.stopService(Intent(instrumentation.targetContext, FeedLoadService::class.java))
                     PlayerHolder.getInstance().stopService()
                     activity.finish()
                 }
+                // stopService() is asynchronous: keep the synthetic DB open through onDestroy.
+                await("activity and player destruction", 20) {
+                    var destroyed = false
+                    onMain { destroyed = activity.isDestroyed && (stoppedPlayer?.exoPlayerIsNull() != false) }
+                    destroyed
+                }
+                onMain { }
             }
         }
     }
