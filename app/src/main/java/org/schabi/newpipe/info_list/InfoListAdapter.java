@@ -527,6 +527,14 @@ public class InfoListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         };
     }
 
+    @Override
+    public void onViewRecycled(@NonNull final RecyclerView.ViewHolder holder) {
+        if (holder instanceof InfoItemHolder) {
+            ((InfoItemHolder) holder).recycle();
+        }
+        super.onViewRecycled(holder);
+    }
+
     static class HFHolder extends RecyclerView.ViewHolder {
         HFHolder(final View v) {
             super(v);
