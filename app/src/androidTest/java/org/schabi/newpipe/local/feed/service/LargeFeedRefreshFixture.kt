@@ -135,7 +135,7 @@ class LargeFeedRefreshFixture(
             val video = "q" + (ordinal * entriesPerChannel + entry).toString().padStart(10, '0')
             """{"gridVideoRenderer":{"videoId":"$video","title":{"simpleText":"Synthetic entry $entry"},
             "thumbnail":{"thumbnails":[{"url":"https://example.invalid/fixture.jpg","width":120,"height":90}]},
-            "lengthText":{"simpleText":"1:00"},"publishedTimeText":{"simpleText":"1 minute ago"},
+            "lengthText":{"simpleText":"1:00"},"publishedTimeText":{"simpleText":"${OffsetDateTime.now().minusDays(1).toLocalDate()}"},
             "viewCountText":{"simpleText":"1 view"},"shortViewCountText":{"simpleText":"1 view"},
             "ownerText":{"runs":[{"text":"Synthetic channel","navigationEndpoint":{"browseEndpoint":{"browseId":"$id"}}}]}}}"""
         }
