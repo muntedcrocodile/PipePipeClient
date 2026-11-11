@@ -184,7 +184,12 @@ class LargeFeedRefreshFixture : AutoCloseable {
             } finally {
                 try {
                     try { database.close() } finally {
-                        databaseName?.let { check(context.deleteDatabase(it)) { "Could not remove synthetic database" } }
+                        databaseName?.let {
+                            // Room opens lazily; a fake-history-only check may never create its file.
+                            val path = context.getDatabasePath(it)
+                            if (path.exists()) check(context.deleteDatabase(it)) { "Could not remove synthetic database" }
+                            check(!path.exists()) { "Synthetic database remained after cleanup" }
+                        }
                     }
                 } finally {
                     try {
