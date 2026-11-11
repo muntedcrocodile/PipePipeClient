@@ -10,7 +10,6 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentHostCallback
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.reactivex.rxjava3.core.Notification
 import io.reactivex.rxjava3.core.Single
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -75,7 +74,7 @@ class FeedRefreshRoutingTest {
     }
 
     private fun assertLoad(intent: Intent, expectedGroup: Long, expectedForce: Boolean) {
-        val result = Single.just<List<Notification<FeedUpdateInfo>>>(emptyList())
+        val result = Single.just<List<FeedUpdateInfo>>(emptyList())
         var calls = 0
         val routed = FeedLoadService.loadRequestedFeed(intent) { group, ignoreOutdatedThreshold ->
             calls++

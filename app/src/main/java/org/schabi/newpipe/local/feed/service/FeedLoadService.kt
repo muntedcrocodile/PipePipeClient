@@ -33,7 +33,6 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Flowable
-import io.reactivex.rxjava3.core.Notification
 import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.functions.Function
@@ -64,8 +63,8 @@ class FeedLoadService : Service() {
         /** Decode the service command at the loader boundary; background requests stay throttled. */
         internal fun loadRequestedFeed(
             intent: Intent,
-            load: (Long, Boolean) -> Single<List<Notification<FeedUpdateInfo>>>,
-        ): Single<List<Notification<FeedUpdateInfo>>> = load(
+            load: (Long, Boolean) -> Single<List<FeedUpdateInfo>>,
+        ): Single<List<FeedUpdateInfo>> = load(
             intent.getLongExtra(EXTRA_GROUP_ID, FeedGroupEntity.GROUP_ALL_ID),
             intent.getBooleanExtra(EXTRA_FORCE_REFRESH, false),
         )
@@ -101,7 +100,9 @@ class FeedLoadService : Service() {
         setupNotification()
         setupBroadcastReceiver()
 
-        loadingDisposable = loadRequestedFeed(intent, feedLoadManager::startLoading)
+        loadingDisposable = loadRequestedFeed(intent) { groupId, force ->
+            feedLoadManager.startLoading(groupId, force, retainResults = false)
+        }
             .observeOn(AndroidSchedulers.mainThread())
             .doOnSubscribe {
                 startForeground(NOTIFICATION_ID, notificationBuilder.build())
