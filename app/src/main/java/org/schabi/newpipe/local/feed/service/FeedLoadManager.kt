@@ -18,6 +18,8 @@ import org.schabi.newpipe.database.subscription.NotificationMode
 import org.schabi.newpipe.database.subscription.SubscriptionEntity
 import org.schabi.newpipe.extractor.Info
 import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.channel.ChannelTabInfo
 import org.schabi.newpipe.extractor.feed.FeedInfo
 import org.schabi.newpipe.extractor.ListInfo
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
@@ -26,8 +28,6 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.local.feed.FeedDatabaseManager
 import org.schabi.newpipe.local.subscription.SubscriptionManager
 import org.schabi.newpipe.util.ChannelTabHelper
-import org.schabi.newpipe.util.ExtractorHelper.getChannelInfo
-import org.schabi.newpipe.util.ExtractorHelper.getChannelTab
 import org.schabi.newpipe.util.ExtractorHelper.getMoreChannelTabItems
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -66,6 +66,8 @@ class FeedLoadManager(private val context: Context) {
      * [GROUP_NOTIFICATION_ENABLED], only subscriptions with enabled notifications for new streams
      * are loaded. Using an id of a group created by the user results in that specific group to be
      * loaded.
+     * @param retainResults Keep channel results for notification callers. Manual refresh disables
+     * this to release stored stream lists as each batch completes.
      * @param ignoreOutdatedThreshold When `false`, only subscriptions which have not been updated
      * within the `feed_update_threshold` are checked for updates. This threshold can be set by
      * the user in the app settings. When `true`, all subscriptions are checked for new streams.
@@ -73,6 +75,7 @@ class FeedLoadManager(private val context: Context) {
     fun startLoading(
         groupId: Long = FeedGroupEntity.GROUP_ALL_ID,
         ignoreOutdatedThreshold: Boolean = false,
+        retainResults: Boolean = true,
     ): Single<List<Notification<FeedUpdateInfo>>> {
         val defaultSharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
         val useFeedExtractor = defaultSharedPreferences.getBoolean(
@@ -132,12 +135,17 @@ class FeedLoadManager(private val context: Context) {
                 loadSubscription(subscription, useFeedExtractor, filterFutureItems, defaultSharedPreferences)
             }
 
-            .sequential()
-            .observeOn(AndroidSchedulers.mainThread())
+            // Extracted channels can contain large stream lists. Bound hand-off queues
+            // instead of letting the default prefetch retain hundreds behind a slow writer.
+            .sequential(1)
+            .observeOn(AndroidSchedulers.mainThread(), false, 1)
             .doOnNext(NotificationConsumer())
-            .observeOn(Schedulers.io())
+            .observeOn(Schedulers.io(), false, 1)
             .buffer(BUFFER_COUNT_BEFORE_INSERT)
             .doOnNext(DatabaseConsumer())
+            // Manual refresh only needs completion/errors; do not collect already stored
+            // stream lists for every subscription. NotificationWorker still needs results.
+            .filter { retainResults }
             .subscribeOn(Schedulers.io())
             .toList()
             .flatMap { x -> postProcessFeed().toSingleDefault(x.flatten()) }
@@ -194,12 +202,12 @@ class FeedLoadManager(private val context: Context) {
                             // use the normal channel tabs extractor if either the user wants it, or
                             // the current service does not have a dedicated feed extractor
 
-                            val channelInfo = getChannelInfo(
-                                subscriptionEntity.serviceId,
-                                subscriptionEntity.url, true
+                            // Feed data is consumed once and persisted below. The navigation
+                            // cache must not retain channel/tab responses for a bulk refresh.
+                            val channelInfo = ChannelInfo.getInfo(
+                                NewPipe.getService(subscriptionEntity.serviceId),
+                                subscriptionEntity.url
                             )
-                                .onErrorReturn(storeOriginalErrorAndRethrow)
-                                .blockingGet()
                             errors.addAll(channelInfo.errors)
                             originalInfo = channelInfo
 
@@ -213,9 +221,9 @@ class FeedLoadManager(private val context: Context) {
                                 }
                                 .map {
                                     Pair(
-                                        getChannelTab(subscriptionEntity.serviceId, it, true)
-                                            .onErrorReturn(storeOriginalErrorAndRethrow)
-                                            .blockingGet(),
+                                        ChannelTabInfo.getInfo(
+                                            NewPipe.getService(subscriptionEntity.serviceId), it
+                                        ),
                                         it
                                     )
                                 }

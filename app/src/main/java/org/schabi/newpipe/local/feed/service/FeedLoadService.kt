@@ -101,7 +101,9 @@ class FeedLoadService : Service() {
         setupNotification()
         setupBroadcastReceiver()
 
-        loadingDisposable = loadRequestedFeed(intent, feedLoadManager::startLoading)
+        loadingDisposable = loadRequestedFeed(intent) { groupId, force ->
+            feedLoadManager.startLoading(groupId, force, retainResults = false)
+        }
             .observeOn(AndroidSchedulers.mainThread())
             .doOnSubscribe {
                 startForeground(NOTIFICATION_ID, notificationBuilder.build())

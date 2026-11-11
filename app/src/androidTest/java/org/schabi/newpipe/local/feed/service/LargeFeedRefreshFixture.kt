@@ -158,9 +158,9 @@ class LargeFeedRefreshFixture(
             .putString("default_resolution", "1080p").putString("default_resolution_mobile", "1080p").commit())
     }
 
-    fun seedSubscriptions() {
-        if (database.subscriptionDAO().rowCount().blockingFirst() == subscriptionCount.toLong()) return
-        val subscriptions = (0 until subscriptionCount).map { index ->
+    fun seedSubscriptions(count: Int = subscriptionCount) {
+        if (database.subscriptionDAO().rowCount().blockingFirst() == count.toLong()) return
+        val subscriptions = (0 until count).map { index ->
             SubscriptionEntity().apply {
                 serviceId = 0
                 name = "Synthetic subscription $index"
@@ -168,11 +168,13 @@ class LargeFeedRefreshFixture(
             }
         }
         database.subscriptionDAO().insertAll(subscriptions)
-        assertEquals(subscriptionCount.toLong(), database.subscriptionDAO().rowCount().blockingFirst())
-        assertEquals(subscriptionCount, subscriptions.map { it.url }.distinct().size)
+        assertEquals(count.toLong(), database.subscriptionDAO().rowCount().blockingFirst())
+        assertEquals(count, subscriptions.map { it.url }.distinct().size)
     }
 
     fun requestCount(): Int = requests.get()
+
+    fun storedStreamCount(): Int = database.streamDAO().getAll().blockingFirst().size
 
     fun refresh() {
         seedSubscriptions()
