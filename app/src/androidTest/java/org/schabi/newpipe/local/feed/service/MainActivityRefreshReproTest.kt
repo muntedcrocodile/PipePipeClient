@@ -84,12 +84,24 @@ class MainActivityRefreshReproTest {
                     }
                     playing
                 }
+                if (InstrumentationRegistry.getArguments().getString("require1080p", "false") == "true") {
+                    await("decoded 1080p playback", 120) {
+                        var height = 0
+                        onMain {
+                            val field = org.schabi.newpipe.player.Player::class.java.getDeclaredField("simpleExoPlayer").apply { isAccessible = true }
+                            val exo = field.get(PlayerHolder.getInstance().player) as com.google.android.exoplayer2.ExoPlayer
+                            height = exo.videoFormat?.height ?: 0
+                            Log.i(TAG, "decodedVideoHeight=$height")
+                        }
+                        height == 1080
+                    }
+                }
                 onMain {
                     assertNotNull(activity.supportFragmentManager.findFragmentById(R.id.fragment_player_holder))
                     BottomSheetBehavior.from(activity.findViewById<FrameLayout>(R.id.fragment_player_holder))
                         .state = BottomSheetBehavior.STATE_COLLAPSED
                 }
-                repeat(5) { cycle ->
+                repeat(InstrumentationRegistry.getArguments().getString("cycles", "5")!!.toInt().coerceIn(1, 5)) { cycle ->
                     val completed = CountDownLatch(1)
                     val failure = AtomicReference<Throwable>()
                     val requested = AtomicBoolean()
@@ -97,7 +109,7 @@ class MainActivityRefreshReproTest {
                     val events = FeedEventManager.events().subscribe { event ->
                         when (event) {
                             is FeedEventManager.Event.ProgressEvent -> {
-                                if (requested.get() && event.maxProgress == 1000 && event.currentProgress == 0) started.set(true)
+                                if (requested.get() && event.maxProgress == fixture.subscriptionCount && event.currentProgress == 0) started.set(true)
                             }
                             is FeedEventManager.Event.SuccessResultEvent -> {
                                 // BehaviorProcessor replays the previous cycle's result to new observers.
@@ -142,14 +154,14 @@ class MainActivityRefreshReproTest {
                             }
                         }
                         failure.get()?.let { throw AssertionError("Refresh failed", it) }
-                        assertEquals(1000, fixture.requestCount() - requestsBefore)
+                        assertEquals(fixture.requestsPerCycle, fixture.requestCount() - requestsBefore)
                         onMain {
                             val player = PlayerHolder.getInstance().player!!
                             assertTrue("Playback stopped during refresh", player.isPlaying)
                             assertTrue("Playback did not advance during refresh", player.currentPosition >= before + 3000)
                         }
                         assertNull("Main looper stalled", heartbeatFailure.get())
-                        Log.i(TAG, "cycle=${cycle + 1} subscriptions=1000 playbackAdvanced=true inputDispatched=true feedViewRecreated=$recreated")
+                        Log.i(TAG, "cycle=${cycle + 1} subscriptions=${fixture.subscriptionCount} playbackAdvanced=true inputDispatched=true feedViewRecreated=$recreated")
                         // Let the service's success callback finish stopping before the next tap.
                         onMain { }
                         Thread.sleep(300)
