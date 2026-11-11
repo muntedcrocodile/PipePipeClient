@@ -1,6 +1,11 @@
 package org.schabi.newpipe.local.feed.service
 
 import android.util.Log
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import androidx.preference.PreferenceManager
 import androidx.room.Room
 import androidx.test.platform.app.InstrumentationRegistry
@@ -41,8 +46,9 @@ class LargeFeedRefreshFixture : AutoCloseable {
             "Run only in a fresh .queue.devicetest.refresh diagnostic installation"
         }
         database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
         databaseField.set(null, database)
-        preferences.edit().putBoolean(preferenceKey, true).commit()
+        check(preferences.edit().putBoolean(preferenceKey, true).commit())
         NewPipe.init(object : Downloader() {
             override fun executeAsync(request: Request, callback: AsyncCallback): CancellableCall =
                 previousDownloader.executeAsync(request, callback)
@@ -78,6 +84,10 @@ class LargeFeedRefreshFixture : AutoCloseable {
                 return Response(200, "OK", emptyMap(), xml, xml.toByteArray(), url)
             }
         }, localization, country)
+        } catch (error: Throwable) {
+            try { close() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+            throw error
+        }
     }
 
     fun refresh() {
@@ -92,21 +102,56 @@ class LargeFeedRefreshFixture : AutoCloseable {
         assertEquals(1000L, database.subscriptionDAO().rowCount().blockingFirst())
         assertEquals(1000, subscriptions.map { it.url }.distinct().size)
         val started = android.os.SystemClock.elapsedRealtime()
-        val results = FeedLoadManager(context).startLoading(ignoreOutdatedThreshold = true)
-            .timeout(180, TimeUnit.SECONDS).blockingGet()
+        val heartbeatFailure = AtomicReference<String>()
+        val heartbeatSamples = AtomicInteger()
+        val main = Handler(Looper.getMainLooper())
+        val monitor = Executors.newSingleThreadScheduledExecutor()
+        val heartbeat = monitor.scheduleWithFixedDelay({
+            val acknowledged = CountDownLatch(1)
+            main.post { acknowledged.countDown() }
+            if (!acknowledged.await(1500, TimeUnit.MILLISECONDS)) {
+                heartbeatFailure.compareAndSet(null, "Main looper unresponsive for 1500ms")
+            }
+            heartbeatSamples.incrementAndGet()
+        }, 0, 500, TimeUnit.MILLISECONDS)
+        val results = try {
+            FeedLoadManager(context).startLoading(ignoreOutdatedThreshold = true)
+                .timeout(180, TimeUnit.SECONDS).blockingGet()
+        } finally {
+            heartbeat.cancel(true)
+            monitor.shutdownNow()
+            check(monitor.awaitTermination(3, TimeUnit.SECONDS)) { "Heartbeat did not stop" }
+        }
+        assertEquals(null, heartbeatFailure.get())
+        assertTrue("Expected repeated main-looper samples", heartbeatSamples.get() >= 4)
         assertEquals(1000, requests.get())
         assertEquals(1000, results.size)
         assertTrue("Synthetic RSS extraction failed", results.all { it.isOnNext })
+        assertTrue("Extraction reported partial errors", results.all { it.value!!.errors.isEmpty() })
+        assertTrue("Missing parsed entries", results.all { it.value!!.streams.size == 20 })
+        assertEquals(20000, results.flatMap { it.value!!.streams }.map { it.url }.distinct().size)
         Log.i("LargeFeedRefresh", "subscriptions=1000 distinct=1000 entries=20000 results=${results.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
     }
 
     override fun close() {
-        NewPipe.init(previousDownloader, localization, country)
-        databaseField.set(null, previousDatabase)
-        database.close()
-        val editor = preferences.edit()
-        if (hadPreference) editor.putBoolean(preferenceKey, oldPreference) else editor.remove(preferenceKey)
-        editor.commit()
-        FeedEventManager.reset()
+        try {
+            NewPipe.init(previousDownloader, localization, country)
+        } finally {
+            try {
+                databaseField.set(null, previousDatabase)
+            } finally {
+                try {
+                    database.close()
+                } finally {
+                    try {
+                        val editor = preferences.edit()
+                        if (hadPreference) editor.putBoolean(preferenceKey, oldPreference) else editor.remove(preferenceKey)
+                        check(editor.commit()) { "Could not restore fixture preference" }
+                    } finally {
+                        FeedEventManager.reset()
+                    }
+                }
+            }
+        }
     }
 }
