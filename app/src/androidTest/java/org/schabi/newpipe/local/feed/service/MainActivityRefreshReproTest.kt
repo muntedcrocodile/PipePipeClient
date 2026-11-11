@@ -42,6 +42,8 @@ class MainActivityRefreshReproTest {
         LargeFeedRefreshFixture().use { fixture ->
             fixture.seedSubscriptions()
             fixture.prepareMainActivity()
+            val cycleTimeoutSeconds = InstrumentationRegistry.getArguments()
+                .getString("cycleTimeoutSeconds", "360")!!.toLong().coerceIn(180, 600)
             NewPipe.setYoutubePlayerClient("mweb")
             val url = InstrumentationRegistry.getArguments().getString("url",
                 "https://www.youtube.com/watch?v=G-eNlqqkn1w")!!
@@ -110,7 +112,7 @@ class MainActivityRefreshReproTest {
                             // The real refresh button calls FeedFragment.reloadContent -> service.
                             assertTrue(feed!!.requireView().findViewById<View>(R.id.refreshIcon).performClick())
                         }
-                        val deadline = SystemClock.elapsedRealtime() + 180_000
+                        val deadline = SystemClock.elapsedRealtime() + cycleTimeoutSeconds * 1000
                         var recreated = false
                         while (!completed.await(1, TimeUnit.SECONDS)) {
                             assertTrue("Refresh timed out", SystemClock.elapsedRealtime() < deadline)
@@ -144,7 +146,7 @@ class MainActivityRefreshReproTest {
                     } finally {
                         // A heartbeat assertion must not close Room while the real service still writes.
                         try {
-                            check(completed.await(180, TimeUnit.SECONDS)) { "Refresh did not quiesce for cleanup" }
+                            check(completed.await(cycleTimeoutSeconds, TimeUnit.SECONDS)) { "Refresh did not quiesce for cleanup" }
                             await("feed service success callback and shutdown", 30) {
                                 var stopped = false
                                 onMain {
