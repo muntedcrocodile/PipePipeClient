@@ -325,8 +325,10 @@ class FeedLoadManager(private val context: Context) {
     private inner class DatabaseConsumer : Consumer<List<Notification<FeedUpdateInfo>>> {
 
         override fun accept(list: List<Notification<FeedUpdateInfo>>) {
-            feedDatabaseManager.database().runInTransaction {
-                for (notification in list) {
+            // Each channel is independent. Holding the writer across the whole batch can
+            // starve the player's durable checkpoint while it shares this database.
+            for (notification in list) {
+                feedDatabaseManager.database().runInTransaction {
                     when {
                         notification.isOnNext -> {
                             val info = notification.value!!
