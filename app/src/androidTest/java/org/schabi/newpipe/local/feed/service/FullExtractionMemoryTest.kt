@@ -13,6 +13,31 @@ import org.schabi.newpipe.util.InfoCache
 @RunWith(AndroidJUnit4::class)
 class FullExtractionMemoryTest {
     @Test
+    fun manualFullRefreshStoresAll450ChannelsWithoutCollectingResults() {
+        LargeFeedRefreshFixture(true).use { fixture ->
+            fixture.seedSubscriptions()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val errors = java.util.concurrent.atomic.AtomicReference<List<Throwable>>()
+            val observer = FeedEventManager.events().subscribe { event ->
+                if (event is FeedEventManager.Event.SuccessResultEvent) errors.set(event.itemsErrors)
+            }
+            try {
+                val result = FeedLoadManager(context).startLoading(
+                    ignoreOutdatedThreshold = true, retainResults = false)
+                    .timeout(600, java.util.concurrent.TimeUnit.SECONDS).blockingGet()
+                assertTrue(result.isEmpty())
+                assertEquals(900, fixture.requestCount())
+                assertEquals(450 * InstrumentationRegistry.getArguments()
+                    .getString("entriesPerChannel", "20")!!.toInt(), fixture.storedStreamCount())
+                assertNotNull("Refresh must post terminal success", errors.get())
+                assertTrue("No channel errors", errors.get()!!.isEmpty())
+            } finally {
+                observer.dispose()
+            }
+        }
+    }
+
+    @Test
     fun discardedResultsStillPersistStreamsAndRetainedResultsKeepNewVideoNotifications() {
         LargeFeedRefreshFixture(true).use { fixture ->
             fixture.seedSubscriptions(6)
