@@ -30,8 +30,13 @@ import java.time.OffsetDateTime
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Bounded repro fixture, never a claim that synthetic RSS reproduces full channel extraction. */
-class LargeFeedRefreshFixture : AutoCloseable {
+/** Synthetic responses parsed by the real RSS or full channel/tab extractors. */
+class LargeFeedRefreshFixture(
+    private val fullExtraction: Boolean = InstrumentationRegistry.getArguments()
+        .getString("fullExtraction", "false") == "true",
+) : AutoCloseable {
+    val subscriptionCount = if (fullExtraction) 450 else 1000
+    val requestsPerCycle get() = subscriptionCount * if (fullExtraction) 2 else 1
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val databaseField = NewPipeDatabase::class.java.getDeclaredField("databaseInstance")
         .apply { isAccessible = true }
@@ -69,7 +74,7 @@ class LargeFeedRefreshFixture : AutoCloseable {
         try {
         databaseField.set(null, database)
         Log.i("LargeFeedRefresh", "databaseMode=${if (databaseName == null) "memory" else "disk-FULL"} entriesPerChannel=$entriesPerChannel")
-        check(preferences.edit().putBoolean(preferenceKey, true).commit())
+        check(preferences.edit().putBoolean(preferenceKey, !fullExtraction).commit())
         NewPipe.init(object : Downloader() {
             override fun executeAsync(request: Request, callback: AsyncCallback): CancellableCall {
                 if (request.url() == "https://github.com/InfinityLoop1308/PipePipe/wiki/Announcement") {
@@ -86,6 +91,14 @@ class LargeFeedRefreshFixture : AutoCloseable {
 
             override fun execute(request: Request): Response {
                 val url = request.url()
+                val body = request.dataToSend()?.toString(Charsets.UTF_8).orEmpty()
+                if (fullExtraction && url.contains("/youtubei/v1/browse") && body.contains("UC000000000000000000")) {
+                    Thread.sleep(50)
+                    val id = org.json.JSONObject(body).getString("browseId")
+                    requests.incrementAndGet()
+                    val json = fullChannelJson(id)
+                    return Response(200, "OK", emptyMap(), json, json.toByteArray(), url)
+                }
                 if (!url.startsWith("https://www.youtube.com/feeds/videos.xml?channel_id=UC000000000000000000")) {
                     return previousDownloader.execute(request)
                 }
@@ -116,18 +129,38 @@ class LargeFeedRefreshFixture : AutoCloseable {
         }
     }
 
+    private fun fullChannelJson(id: String): String {
+        val ordinal = id.takeLast(4).toInt()
+        val items = (0 until entriesPerChannel).joinToString(",") { entry ->
+            val video = "q" + (ordinal * entriesPerChannel + entry).toString().padStart(10, '0')
+            """{"gridVideoRenderer":{"videoId":"$video","title":{"simpleText":"Synthetic entry $entry"},
+            "thumbnail":{"thumbnails":[{"url":"https://example.invalid/fixture.jpg","width":120,"height":90}]},
+            "lengthText":{"simpleText":"1:00"},"publishedTimeText":{"simpleText":"1 minute ago"},
+            "viewCountText":{"simpleText":"1 view"},"shortViewCountText":{"simpleText":"1 view"},
+            "ownerText":{"runs":[{"text":"Synthetic channel","navigationEndpoint":{"browseEndpoint":{"browseId":"$id"}}}]}}}"""
+        }
+        return """{"header":{"c4TabbedHeaderRenderer":{"channelId":"$id","title":"Synthetic channel",
+          "avatar":{"thumbnails":[]},"banner":{"thumbnails":[]},"badges":[],"subscriberCountText":{"simpleText":"1 subscriber"}}},
+          "metadata":{"channelMetadataRenderer":{"title":"Synthetic channel","externalId":"$id","description":"Synthetic full extraction"}},
+          "microformat":{"microformatDataRenderer":{"tags":[]}},
+          "contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"selected":true,"title":"Videos",
+          "endpoint":{"commandMetadata":{"webCommandMetadata":{"url":"/channel/$id/videos"}}},
+          "content":{"sectionListRenderer":{"contents":[{"itemSectionRenderer":{"contents":[{"gridRenderer":{"items":[$items]}}]}}]}}}}]}}}"""
+    }
+
     fun prepareMainActivity() {
-        for (key in listOf("isFirstRun", "version_code", "last_show_donation_time")) {
+        for (key in listOf("isFirstRun", "version_code", "last_show_donation_time", "default_resolution", "default_resolution_mobile")) {
             savedUiPreferences[key] = preferences.all[key]
         }
         check(preferences.edit().putInt("isFirstRun", 1)
             .putInt("version_code", BuildConfig.VERSION_CODE)
-            .putLong("last_show_donation_time", System.currentTimeMillis()).commit())
+            .putLong("last_show_donation_time", System.currentTimeMillis())
+            .putString("default_resolution", "1080p").putString("default_resolution_mobile", "1080p").commit())
     }
 
     fun seedSubscriptions() {
-        if (database.subscriptionDAO().rowCount().blockingFirst() == 1000L) return
-        val subscriptions = (0 until 1000).map { index ->
+        if (database.subscriptionDAO().rowCount().blockingFirst() == subscriptionCount.toLong()) return
+        val subscriptions = (0 until subscriptionCount).map { index ->
             SubscriptionEntity().apply {
                 serviceId = 0
                 name = "Synthetic subscription $index"
@@ -135,8 +168,8 @@ class LargeFeedRefreshFixture : AutoCloseable {
             }
         }
         database.subscriptionDAO().insertAll(subscriptions)
-        assertEquals(1000L, database.subscriptionDAO().rowCount().blockingFirst())
-        assertEquals(1000, subscriptions.map { it.url }.distinct().size)
+        assertEquals(subscriptionCount.toLong(), database.subscriptionDAO().rowCount().blockingFirst())
+        assertEquals(subscriptionCount, subscriptions.map { it.url }.distinct().size)
     }
 
     fun requestCount(): Int = requests.get()
@@ -199,6 +232,7 @@ class LargeFeedRefreshFixture : AutoCloseable {
                             when (value) {
                                 is Int -> editor.putInt(key, value)
                                 is Long -> editor.putLong(key, value)
+                                is String -> editor.putString(key, value)
                                 else -> editor.remove(key)
                             }
                         }
