@@ -53,7 +53,8 @@ class FullExtractionMemoryTest {
             assertTrue("Full channel extraction must succeed", result.isOnNext)
             val update = result.value!!
             assertTrue("Need nonempty parsed tab", update.streams.isNotEmpty())
-            assertTrue("No partial extraction errors: ${update.errors.map { e -> e.javaClass.simpleName }}", update.errors.isEmpty())
+            update.errors.take(3).forEach { error -> android.util.Log.e("FullExtractionFixture", "Synthetic parse error", error) }
+            assertTrue("No partial extraction errors: ${update.errors.map { e -> e.message }}", update.errors.isEmpty())
             assertEquals("Synthetic full extraction", update.description)
             assertEquals(1L, update.subscriberCount)
             assertNull("Feed refresh must not retain channel extraction data in navigation cache",
