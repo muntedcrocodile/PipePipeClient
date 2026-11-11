@@ -1,6 +1,8 @@
 package org.schabi.newpipe.local.feed.service
 
 import android.content.Intent
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Debug
 import android.os.Handler
 import android.os.Looper
@@ -39,6 +41,7 @@ class MainActivityRefreshReproTest {
     fun actualPlayerAndFeedRepeatedRefreshWithInputAndViewRecreation() {
         LargeFeedRefreshFixture().use { fixture ->
             fixture.seedSubscriptions()
+            fixture.prepareMainActivity()
             NewPipe.setYoutubePlayerClient("mweb")
             val url = InstrumentationRegistry.getArguments().getString("url",
                 "https://www.youtube.com/watch?v=G-eNlqqkn1w")!!
@@ -142,6 +145,16 @@ class MainActivityRefreshReproTest {
                         // A heartbeat assertion must not close Room while the real service still writes.
                         try {
                             check(completed.await(180, TimeUnit.SECONDS)) { "Refresh did not quiesce for cleanup" }
+                            await("feed service success callback and shutdown", 30) {
+                                var stopped = false
+                                onMain {
+                                    val manager = instrumentation.targetContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                                    stopped = manager.getRunningServices(100).none {
+                                        it.service.className == FeedLoadService::class.java.name
+                                    }
+                                }
+                                stopped
+                            }
                         } finally {
                             events.dispose()
                         }

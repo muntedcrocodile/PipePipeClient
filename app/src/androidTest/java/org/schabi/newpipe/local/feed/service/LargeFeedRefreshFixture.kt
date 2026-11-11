@@ -14,6 +14,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.schabi.newpipe.NewPipeDatabase
+import org.schabi.newpipe.BuildConfig
+import java.io.IOException
 import org.schabi.newpipe.R
 import org.schabi.newpipe.database.AppDatabase
 import org.schabi.newpipe.database.subscription.SubscriptionEntity
@@ -42,6 +44,7 @@ class LargeFeedRefreshFixture : AutoCloseable {
     private val hadPreference = preferences.contains(preferenceKey)
     private val oldPreference = preferences.getBoolean(preferenceKey, false)
     private val requests = AtomicInteger()
+    private val savedUiPreferences = mutableMapOf<String, Any?>()
     private val arguments = InstrumentationRegistry.getArguments()
     private val entriesPerChannel = arguments.getString("entriesPerChannel", "20")!!.toInt()
         .also { require(it in 20..200) }
@@ -68,8 +71,13 @@ class LargeFeedRefreshFixture : AutoCloseable {
         Log.i("LargeFeedRefresh", "databaseMode=${if (databaseName == null) "memory" else "disk-FULL"} entriesPerChannel=$entriesPerChannel")
         check(preferences.edit().putBoolean(preferenceKey, true).commit())
         NewPipe.init(object : Downloader() {
-            override fun executeAsync(request: Request, callback: AsyncCallback): CancellableCall =
-                previousDownloader.executeAsync(request, callback)
+            override fun executeAsync(request: Request, callback: AsyncCallback): CancellableCall {
+                if (request.url() == "https://github.com/InfinityLoop1308/PipePipe/wiki/Announcement") {
+                    // Keep the fresh-package diagnostic on the returning-user playback screen.
+                    throw IOException("Announcement UI excluded from synthetic refresh diagnostic")
+                }
+                return previousDownloader.executeAsync(request, callback)
+            }
 
             override fun postStreaming(
                 url: String, headers: Map<String, List<String>>?, data: ByteArray?,
@@ -106,6 +114,15 @@ class LargeFeedRefreshFixture : AutoCloseable {
             try { close() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
             throw error
         }
+    }
+
+    fun prepareMainActivity() {
+        for (key in listOf("isFirstRun", "version_code", "last_show_donation_time")) {
+            savedUiPreferences[key] = preferences.all[key]
+        }
+        check(preferences.edit().putInt("isFirstRun", 1)
+            .putInt("version_code", BuildConfig.VERSION_CODE)
+            .putLong("last_show_donation_time", System.currentTimeMillis()).commit())
     }
 
     fun seedSubscriptions() {
@@ -173,6 +190,13 @@ class LargeFeedRefreshFixture : AutoCloseable {
                     try {
                         val editor = preferences.edit()
                         if (hadPreference) editor.putBoolean(preferenceKey, oldPreference) else editor.remove(preferenceKey)
+                        for ((key, value) in savedUiPreferences) {
+                            when (value) {
+                                is Int -> editor.putInt(key, value)
+                                is Long -> editor.putLong(key, value)
+                                else -> editor.remove(key)
+                            }
+                        }
                         check(editor.commit()) { "Could not restore fixture preference" }
                     } finally {
                         FeedEventManager.reset()
