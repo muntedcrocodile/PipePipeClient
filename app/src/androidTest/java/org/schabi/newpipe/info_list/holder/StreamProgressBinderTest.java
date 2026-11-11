@@ -97,9 +97,12 @@ public class StreamProgressBinderTest {
             final var progress = new AtomicReference<AnimatedProgressBar>();
             final var binder = new AtomicReference<StreamProgressBinder>();
             main(() -> {
-                progress.set(new AnimatedProgressBar(context));
-                // Match the determinate progress widget declared in the row layouts.
+                progress.set(new AnimatedProgressBar(context, null,
+                        android.R.attr.progressBarStyleHorizontal));
+                // The default circular style is indeterminate-only and ignores setProgress.
                 progress.get().setIndeterminate(false);
+                assertFalse("Fixture must use the real row's determinate style",
+                        progress.get().isIndeterminate());
                 binder.set(new StreamProgressBinder(progress.get()));
             });
             try { check.run(binder.get(), progress.get(), context); }
