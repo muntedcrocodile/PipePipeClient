@@ -8,6 +8,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import androidx.preference.PreferenceManager
 import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,6 +23,7 @@ import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.player.playqueue.PersistentQueueStore
 import java.time.OffsetDateTime
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -45,7 +48,13 @@ class LargeFeedRefreshFixture : AutoCloseable {
         check(context.packageName.endsWith(".queue.devicetest.refresh")) {
             "Run only in a fresh .queue.devicetest.refresh diagnostic installation"
         }
-        database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .addCallback(object : RoomDatabase.Callback() {
+                override fun onOpen(db: SupportSQLiteDatabase) {
+                    // Match the production callback needed by the enabled persistent player queue.
+                    PersistentQueueStore.createTable(db)
+                }
+            }).build()
         try {
         databaseField.set(null, database)
         check(preferences.edit().putBoolean(preferenceKey, true).commit())
