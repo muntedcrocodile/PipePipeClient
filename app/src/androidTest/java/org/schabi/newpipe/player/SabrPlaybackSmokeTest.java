@@ -133,6 +133,18 @@ public final class SabrPlaybackSmokeTest {
     }
 
     @Test
+    public void playbackDuringLargeSubscriptionRefresh() throws Exception {
+        try (var fixture = new org.schabi.newpipe.local.feed.service.LargeFeedRefreshFixture()) {
+            runSmokeCase(SmokeCase.playback(), player -> {
+                final long before = positionOf(player);
+                fixture.refresh();
+                assertTrue("Playback must advance while 1000 subscriptions refresh",
+                        positionOf(player) >= before + 3_000);
+            });
+        }
+    }
+
+    @Test
     public void extractorToSabrFetchesAudioAfter65Seconds() throws Exception {
         final Context context = InstrumentationRegistry.getInstrumentation()
                 .getTargetContext().getApplicationContext();
@@ -1228,6 +1240,12 @@ public final class SabrPlaybackSmokeTest {
     }
 
     private static void runSmokeCase(final SmokeCase smokeCase) throws Exception {
+        runSmokeCase(smokeCase, player -> { });
+    }
+
+    private static void runSmokeCase(final SmokeCase smokeCase,
+                                    final java.util.function.Consumer<ExoPlayer> duringPlayback)
+            throws Exception {
         final Context context = InstrumentationRegistry.getInstrumentation()
                 .getTargetContext().getApplicationContext();
         assertTrue("The target process must use PipePipe's App initialization",
@@ -1358,6 +1376,8 @@ public final class SabrPlaybackSmokeTest {
             assertTrue("Audio output did not start",
                     audioStarted.await(PLAYBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS));
             assertNull("Player failed while starting audio", playerError.get());
+            duringPlayback.accept(playerRef.get());
+            assertNull("Player failed during concurrent work", playerError.get());
             if (smokeCase.isSponsorBlockCase()) {
                 verifySponsorBlockSkipToEnd(playerRef.get(), smokeCase, tailStartPositionMs,
                         seekProcessed, seekPositionReported, playerError, ended);
