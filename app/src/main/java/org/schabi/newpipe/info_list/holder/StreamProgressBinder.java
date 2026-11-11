@@ -51,8 +51,8 @@ final class StreamProgressBinder {
         }
         boundItem = item;
         boundHistory = history;
-        if (item.getDuration() <= 0 || item.getStreamType() == StreamType.LIVE_STREAM
-                || item.getStreamType() == StreamType.AUDIO_LIVE_STREAM) {
+        if (item.getDuration() <= 0
+                || (animate && item.getStreamType() == StreamType.LIVE_STREAM)) {
             progress.setVisibility(View.GONE);
             return;
         }
