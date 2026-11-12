@@ -219,29 +219,29 @@ public final class NavigationHelper {
     }
 
     public static void enqueueOnPlayer(final Context context, final PlayQueue queue) {
-        PlayerType playerType = PlayerHolder.getInstance().getType();
-        if (!PlayerHolder.getInstance().isPlayerOpen()) {
-            Log.e(TAG, "Enqueueing but no player is open; defaulting to background player");
-            playerType = PlayerService.PlayerType.AUDIO;
-        }
-
-        enqueueOnPlayer(context, queue, playerType);
+        enqueueOnPlayer(context, queue, playerTypeForEnqueue());
     }
 
     /* ENQUEUE NEXT */
     public static void enqueueNextOnPlayer(final Context context, final PlayQueue queue) {
-        PlayerType playerType = PlayerHolder.getInstance().getType();
-        if (!PlayerHolder.getInstance().isPlayerOpen()) {
-            Log.e(TAG, "Enqueueing next but no player is open; defaulting to background player");
-            playerType = PlayerService.PlayerType.AUDIO;
-        }
         if (!PersistentQueueManager.isEnabled(context)) {
             Toast.makeText(context, R.string.enqueued_next, Toast.LENGTH_SHORT).show();
         }
-        final Intent intent = getPlayerEnqueueNextIntent(context, DeviceUtils.getPlayerServiceClass(), queue);
-
-        intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, playerType.ordinal());
+        final Intent intent = getPlayerEnqueueNextIntent(context,
+                DeviceUtils.getPlayerServiceClass(), queue);
+        intent.putExtra(PlayerIntentConstants.PLAYER_TYPE, playerTypeForEnqueue().ordinal());
         ContextCompat.startForegroundService(context, intent);
+    }
+
+    /** Keep the active player mode; an enqueue without a player starts background playback. */
+    @NonNull
+    private static PlayerType playerTypeForEnqueue() {
+        final PlayerType playerType = PlayerHolder.getInstance().getType();
+        if (playerType != null) {
+            return playerType;
+        }
+        Log.e(TAG, "Enqueueing but no player is open; defaulting to background player");
+        return PlayerType.AUDIO;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
