@@ -20,8 +20,10 @@ class VideoDetailViewModel : ViewModel() {
 
     /** Result of [load], delivered once to the fragment shown at that time. */
     sealed class LoadResult {
-        class Success(val info: StreamInfo, val addToBackStack: Boolean) : LoadResult()
-        class Failure(val error: Throwable, val serviceId: Int, val url: String?) : LoadResult()
+        class Success(val info: StreamInfo, val addToBackStack: Boolean,
+                      val selectionGeneration: Long) : LoadResult()
+        class Failure(val error: Throwable, val serviceId: Int, val url: String?,
+                      val selectionGeneration: Long) : LoadResult()
     }
 
     /** Wraps a [LoadResult] so that a recreated fragment does not handle it a second time. */
@@ -66,7 +68,7 @@ class VideoDetailViewModel : ViewModel() {
     /** Swiped away: empty, but ready for the next stream. */
     val wasCleared: Boolean get() = url == null
 
-    fun load(forceLoad: Boolean, addToBackStack: Boolean) {
+    fun load(forceLoad: Boolean, addToBackStack: Boolean, selectionGeneration: Long) {
         cancelLoading()
         currentInfo = null
         val loadServiceId = serviceId
@@ -76,8 +78,9 @@ class VideoDetailViewModel : ViewModel() {
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
             .subscribe(
-                { _results.value = Once(LoadResult.Success(it, addToBackStack)) },
-                { _results.value = Once(LoadResult.Failure(it, loadServiceId, loadUrl)) },
+                { _results.value = Once(LoadResult.Success(it, addToBackStack, selectionGeneration)) },
+                { _results.value = Once(LoadResult.Failure(it, loadServiceId, loadUrl,
+                    selectionGeneration)) },
             )
     }
 
