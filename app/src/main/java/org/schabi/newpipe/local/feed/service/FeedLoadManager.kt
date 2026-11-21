@@ -348,7 +348,7 @@ class FeedLoadManager(private val context: Context) {
                             }
 
                             // skip channels unsubscribed while the feed was updating
-                            if (!subscriptionManager.updateFromInfo(info)) continue
+                            if (!subscriptionManager.updateFromInfo(info)) return@runInTransaction
 
                             notification.value!!.newStreams = filterNewStreams(info.streams)
 

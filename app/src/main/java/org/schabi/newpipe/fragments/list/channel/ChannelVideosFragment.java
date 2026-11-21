@@ -54,6 +54,7 @@ import org.schabi.newpipe.ktx.AnimationType;
 import org.schabi.newpipe.local.feed.notifications.NotificationHelper;
 import org.schabi.newpipe.local.subscription.SubscriptionManager;
 import org.schabi.newpipe.local.subscription.dialog.FeedGroupSelectionDialog;
+import org.schabi.newpipe.player.PlayerService.PlayerType;
 import org.schabi.newpipe.player.playqueue.ChannelPlayQueue;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
 import org.schabi.newpipe.util.ExtractorHelper;
@@ -711,6 +712,16 @@ public class ChannelVideosFragment extends BaseListInfoFragment<StreamInfoItem, 
         playlistControlBinding.playlistCtrlPlayBgButton
                 .setOnClickListener(view -> NavigationHelper
                         .playOnBackgroundPlayer(activity, getPlayQueue(), false));
+
+        playlistControlBinding.playlistCtrlPlayPopupButton.setOnLongClickListener(view -> {
+            NavigationHelper.enqueueOnPlayer(activity, getPlayQueue(), PlayerType.POPUP);
+            return true;
+        });
+
+        playlistControlBinding.playlistCtrlPlayBgButton.setOnLongClickListener(view -> {
+            NavigationHelper.enqueueOnPlayer(activity, getPlayQueue(), PlayerType.AUDIO);
+            return true;
+        });
     }
 
     private void showContentNotSupportedIfNeeded() {

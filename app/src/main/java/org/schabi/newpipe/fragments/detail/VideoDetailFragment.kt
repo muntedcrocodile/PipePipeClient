@@ -34,6 +34,7 @@ import org.schabi.newpipe.player.Player
 import org.schabi.newpipe.player.PlayerError
 import org.schabi.newpipe.player.PlayerPlaybackParameters
 import org.schabi.newpipe.player.PlayerPlaybackState
+import org.schabi.newpipe.player.PlayerService.PlayerType
 import org.schabi.newpipe.player.PlayerUiModeController
 import org.schabi.newpipe.player.RepeatMode
 import org.schabi.newpipe.player.event.DetailPlayerEvents
@@ -721,7 +722,7 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
 
     // Players
 
-    private fun openBackgroundPlayer() {
+    private fun openBackgroundPlayer(append: Boolean) {
         cancelPendingVideoOpen()
         player?.changeFullscreen(false)
         // FIXME Workaround #7427
@@ -729,11 +730,15 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
         if (player == null) {
             playerHolder.startService(false, this)
         }
-        val queue = playQueueForIntent() ?: return
-        NavigationHelper.playOnBackgroundPlayer(requireActivity(), queue, true)
+        val queue = playQueueForIntent(append) ?: return
+        if (append) {
+            NavigationHelper.enqueueOnPlayer(requireActivity(), queue, PlayerType.AUDIO)
+        } else {
+            NavigationHelper.playOnBackgroundPlayer(requireActivity(), queue, true)
+        }
     }
 
-    private fun openPopupPlayer() {
+    private fun openPopupPlayer(append: Boolean) {
         val activity = requireActivity()
         if (!PermissionHelper.isPopupEnabled(activity)) {
             PermissionHelper.showPopupEnablementToast(activity)
@@ -749,8 +754,12 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
             player.setRecovery()
             player.changeFullscreen(false)
         }
-        val queue = playQueueForIntent() ?: return
-        NavigationHelper.playOnPopupPlayer(activity, queue, true)
+        val queue = playQueueForIntent(append) ?: return
+        if (append) {
+            NavigationHelper.enqueueOnPlayer(activity, queue, PlayerType.POPUP)
+        } else {
+            NavigationHelper.playOnPopupPlayer(activity, queue, true)
+        }
     }
 
     private fun openMainPlayer() {
@@ -760,7 +769,7 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
             playerHolder.startService(autoPlayEnabled, this)
             return
         }
-        val queue = playQueueForIntent() ?: return
+        val queue = playQueueForIntent(false) ?: return
         PlaybackStartupTrace.mark(pendingStartupTraceId, "play_queue_ready")
         // The video view can still show parts of the popup. It is hidden until the player
         // shows it again once ready.
@@ -773,10 +782,10 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
         ContextCompat.startForegroundService(activity ?: return, intent)
     }
 
-    /** The queue to play: the current queue, or the current stream alone if there is none. */
-    private fun playQueueForIntent(): PlayQueue? {
+    /** The queue to play: the current queue, or the current stream alone if [append]. */
+    private fun playQueueForIntent(append: Boolean): PlayQueue? {
         val queue = vm.playQueue
-        if (queue != null && !queue.isEmpty) {
+        if (!append && queue != null && !queue.isEmpty) {
             return queue
         }
         // the queue may be empty, as it removes failing streams by itself
@@ -1050,11 +1059,11 @@ open class VideoDetailFragment : BaseStateFragment<StreamInfo>(), BackPressable,
             vm.currentInfo?.let { actions?.openChannel(it.uploaderUrl, it.uploaderName) }
         }
 
-        override fun openBackgroundPlayer() =
-            this@VideoDetailFragment.openBackgroundPlayer()
+        override fun openBackgroundPlayer(append: Boolean) =
+            this@VideoDetailFragment.openBackgroundPlayer(append)
 
-        override fun openPopupPlayer() =
-            this@VideoDetailFragment.openPopupPlayer()
+        override fun openPopupPlayer(append: Boolean) =
+            this@VideoDetailFragment.openPopupPlayer(append)
 
         override fun playInMainPlayer() {
             beginStartupTrace()
