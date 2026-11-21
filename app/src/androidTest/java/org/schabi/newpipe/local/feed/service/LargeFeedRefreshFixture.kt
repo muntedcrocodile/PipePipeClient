@@ -203,10 +203,9 @@ class LargeFeedRefreshFixture(
         assertTrue("Expected repeated main-looper samples", heartbeatSamples.get() >= 4)
         assertEquals(1000, requests.get())
         assertEquals(1000, results.size)
-        assertTrue("Synthetic RSS extraction failed", results.all { it.isOnNext })
-        assertTrue("Extraction reported partial errors", results.all { it.value!!.errors.isEmpty() })
-        assertTrue("Missing parsed entries", results.all { it.value!!.streams.size == entriesPerChannel })
-        assertEquals(1000 * entriesPerChannel, results.flatMap { it.value!!.streams }.map { it.url }.distinct().size)
+        // Only channels with new streams are retained, reduced to what notifications need.
+        assertTrue("Missing parsed entries", results.all { it.newStreams.size == entriesPerChannel })
+        assertEquals(1000 * entriesPerChannel, results.flatMap { it.newStreams }.map { it.url }.distinct().size)
         Log.i("LargeFeedRefresh", "subscriptions=1000 distinct=1000 entries=${1000 * entriesPerChannel} results=${results.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
     }
 
